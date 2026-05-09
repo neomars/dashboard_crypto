@@ -1,28 +1,17 @@
-import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
+import numpy as np
 import yfinance as yf
+import plotly.graph_objects as go
 from datetime import datetime
 import streamlit as st
 
+@st.cache_data
 def get_cycle_plot():
-    # Style
-    plt.rcParams['font.family'] = 'serif'
-    bg_color = '#F5F5DC'  # Beige like the image
-    text_color = '#2F4F4F' # Dark slate gray
-
-    fig = plt.figure(figsize=(14, 14), facecolor=bg_color)
-    ax = fig.add_subplot(111, projection='polar', facecolor=bg_color)
-
     # 1. Fetch Data
-    # Get BTC data from yfinance (starts ~2014)
     btc = yf.download("BTC-USD", start="2010-01-01")
-
-    # Check if we have data
     if btc.empty:
         return None
 
-    # Handle MultiIndex if necessary (some versions of yfinance)
     if isinstance(btc.columns, pd.MultiIndex):
         close_prices = btc['Close']['BTC-USD']
     else:
@@ -31,119 +20,201 @@ def get_cycle_plot():
     df = pd.DataFrame({'Close': close_prices})
     df['LogPrice'] = np.log10(df['Close'])
 
-    # 2. Angle calculation
-    # 1 rotation = 4 years
+    # 2. Angle calculation (1 rotation = 4 years)
     start_date = datetime(2009, 1, 1)
     df['Days'] = (df.index - start_date).days
     rotation_period = 4 * 365.25
-    df['Angle'] = (df['Days'] / rotation_period) * 2 * np.pi
+    # Theta in degrees for Plotly. Direction is clockwise, 0 at North.
+    df['Angle'] = (df['Days'] / rotation_period) * 360
 
-    # 3. Z-Score / Color Proxy
-    # Using distance from 200-day moving average as a proxy for Z-score
+    # 3. Days Post-Halving
+    halvings = [
+        datetime(2009, 1, 3),
+        datetime(2012, 11, 28),
+        datetime(2016, 7, 9),
+        datetime(2020, 5, 11),
+        datetime(2024, 4, 20)
+    ]
+
+    def get_days_post_halving(date):
+        past_halvings = [h for h in halvings if h <= date]
+        if not past_halvings:
+            return 0
+        last_halving = max(past_halvings)
+        return (date - last_halving).days
+
+    df['DaysPostHalving'] = df.index.map(get_days_post_halving)
+
+    # 4. Z-Score / Color Proxy
     df['SMA200'] = df['Close'].rolling(window=200).mean()
     df['ZScore'] = (df['Close'] - df['SMA200']) / df['Close'].rolling(window=200).std()
     df['ZScore'] = df['ZScore'].fillna(0)
+    # Inverse color scale: Green for low Z-score (Buy), Red for high (Sell)
+    # Plotly's RdYlGn is Red-Yellow-Green. We want Green-Yellow-Red.
+    df['ZScore_Clipped'] = np.clip(df['ZScore'], -2, 4)
 
-    # Clip Z-score for better color mapping
-    z_min, z_max = -2, 4
-    df['ZScore_Clipped'] = np.clip(df['ZScore'], z_min, z_max)
+    # 5. Create Plotly Figure
+    fig = go.Figure()
 
-    # 4. Plotting the Price Spiral
-    # Use scatter to color code by Z-score
-    sc = ax.scatter(df['Angle'], df['LogPrice'], c=df['ZScore_Clipped'],
-                    cmap='RdYlGn', s=5, alpha=0.6, edgecolors='none')
+    # Add background sectors for years
+    # Q1: 0-90, Q2: 90-180, Q3: 180-270, Q4: 270-360
+    colors = ['rgba(144, 238, 144, 0.05)', 'rgba(255, 255, 224, 0.05)',
+              'rgba(255, 182, 193, 0.05)', 'rgba(173, 216, 230, 0.05)']
 
-    # 5. Visualizing the structure
-    # Circular Price Grids
-    price_levels = [0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000, 1000000]
+    for i in range(4):
+        start_angle = i * 90
+        end_angle = (i + 1) * 90
+        theta = np.linspace(start_angle, end_angle, 50)
+        fig.add_trace(go.Scatterpolar(
+            r=[11]*len(theta) + [0],
+            theta=list(theta) + [start_angle],
+            fill='toself',
+            fillcolor=colors[i],
+            line=dict(color='rgba(0,0,0,0)'),
+            hoverinfo='none',
+            showlegend=False
+        ))
+
+    # Price levels (concentric circles)
+    price_levels = [1, 10, 100, 1000, 10000, 100000, 1000000]
     for p in price_levels:
-        r = np.log10(p)
-        ax.plot(np.linspace(0, 2*np.pi, 500), [r]*500, color='gray', linewidth=0.5, alpha=0.3)
-        if p >= 0.1:
-            label = f"${p:,.0f}" if p >= 1 else f"${p}"
-            ax.text(0, r, label, color=text_color, fontsize=8, ha='center', va='bottom', alpha=0.7)
+        r_val = np.log10(p)
+        fig.add_trace(go.Scatterpolar(
+            r=[r_val]*361,
+            theta=list(range(361)),
+            mode='lines',
+            line=dict(color='rgba(100,100,100,0.1)', width=1),
+            hoverinfo='none',
+            showlegend=False
+        ))
+        fig.add_trace(go.Scatterpolar(
+            r=[r_val],
+            theta=[0],
+            mode='text',
+            text=[f"${p:,}"],
+            textfont=dict(size=10, color="gray"),
+            hoverinfo='none',
+            showlegend=False
+        ))
 
-    # 6. Axes and Years
-    ax.set_theta_zero_location('N')
-    ax.set_theta_direction(-1) # Clockwise
+    # Price Spiral
+    fig.add_trace(go.Scatterpolar(
+        r=df['LogPrice'],
+        theta=df['Angle'],
+        mode='markers',
+        marker=dict(
+            size=4,
+            color=df['ZScore_Clipped'],
+            colorscale='RdYlGn',
+            reversescale=True,
+            showscale=True,
+            colorbar=dict(
+                title="Sentiment (Z-Score)",
+                thickness=15,
+                x=1.05,
+                tickvals=[-2, 1, 4],
+                ticktext=['Froid', 'Neutre', 'Chaud']
+            )
+        ),
+        text=[f"Date: {d.strftime('%Y-%m-%d')}<br>Prix: ${c:,.2f}<br>Jours post-halving: {h}"
+              for d, c, h in zip(df.index, df['Close'], df['DaysPostHalving'])],
+        hoverinfo='text',
+        name='Prix BTC'
+    ))
 
+    # Add labels for years at the axes
     axes_labels = [
         (0, "2009, '13, '17, '21, '25"),
-        (np.pi/2, "2010, '14, '18, '22, '26"),
-        (np.pi, "2011, '15, '19, '23, '27"),
-        (3*np.pi/2, "2012, '16, '20, '24, '28")
+        (90, "2010, '14, '18, '22, '26"),
+        (180, "2011, '15, '19, '23, '27"),
+        (270, "2012, '16, '20, '24, '28")
     ]
 
     for angle, label in axes_labels:
-        ax.plot([angle, angle], [-3, 7], color='green', linewidth=1, alpha=0.5)
-        ax.text(angle, 7.5, label, color=text_color, fontsize=10, ha='center', va='center', rotation=-np.degrees(angle))
+        # Divider line
+        fig.add_trace(go.Scatterpolar(
+            r=[0, 11],
+            theta=[angle, angle],
+            mode='lines',
+            line=dict(color='rgba(0,100,0,0.2)', width=1.5),
+            hoverinfo='none',
+            showlegend=False
+        ))
+        # Label
+        fig.add_trace(go.Scatterpolar(
+            r=[11.5],
+            theta=[angle],
+            mode='text',
+            text=[label],
+            textfont=dict(size=11, color="darkgreen", family="serif"),
+            hoverinfo='none',
+            showlegend=False
+        ))
 
-    # 7. Phases Labels
+    # Psych Phases
     phases = [
-        ("BELIEF", "TIME TO GET FULLY INVESTED.", 11.25),
-        ("INTERMISSION", "THE TOP MIGHT BE IN.", 33.75),
-        ("THRILL", "GOTTA TELL EVERYONE TO BUY.", 56.25),
-        ("EUPHORIA", "I'M A GENIUS.", 78.75),
-
-        ("COMPLACENCY", "WE JUST NEED TO COOL OFF\nFOR THE NEXT RALLY.", 101.25),
-        ("DENIAL", "WHY AM I GETTING\nMARGIN CALLS?", 123.75),
-        ("PANIC", "SHIT, EVERYONE IS SELLING.", 146.25),
-        ("CAPITULATION", "I CAN'T AFFORD TO LOSE.", 168.75),
-
-        ("DEPRESSION", "I'M AN IDIOT.", 191.25),
-        ("ENDURING", "THIS IS GOING NOWHERE.", 213.75),
-        ("STAGNATION", "THIS IS A SUCKER'S RALLY.", 236.25),
-        ("DISBELIEF", "THIS RALLY WILL\nFAIL LIKE BEFORE.", 258.75),
-
-        ("DOUBT", "IS THE HALVING PRICED IN?", 281.25),
-        ("HOPE", "A RECOVERY IS POSSIBLE.", 303.75),
-        ("CALM", "LET'S WAIT FOR CONFIRMATION.", 326.25),
-        ("OPTIMISM", "THIS RALLY IS REAL.", 348.75),
+        ("BELIEF", 11.25), ("INTERMISSION", 33.75), ("THRILL", 56.25), ("EUPHORIA", 78.75),
+        ("COMPLACENCY", 101.25), ("DENIAL", 123.75), ("PANIC", 146.25), ("CAPITULATION", 168.75),
+        ("DEPRESSION", 191.25), ("ENDURING", 213.75), ("STAGNATION", 236.25), ("DISBELIEF", 258.75),
+        ("DOUBT", 281.25), ("HOPE", 303.75), ("CALM", 326.25), ("OPTIMISM", 348.75),
     ]
 
-    for title, subtitle, angle_deg in phases:
-        angle_rad = np.radians(angle_deg)
-        # Main label
-        ax.text(angle_rad, 9.5, title, fontsize=14, fontweight='bold',
-                color=text_color, ha='center', va='center', rotation=-angle_deg)
-        # Subtitle
-        ax.text(angle_rad, 8.5, subtitle, fontsize=8, color=text_color,
-                ha='center', va='center', rotation=-angle_deg)
+    fig.add_trace(go.Scatterpolar(
+        r=[9.5]*len(phases),
+        theta=[p[1] for p in phases],
+        mode='text',
+        text=[p[0] for p in phases],
+        textfont=dict(size=9, color="black", family="serif"),
+        hoverinfo='none',
+        showlegend=False
+    ))
 
-    # 8. Info Box (Top Right)
-    info_text = (
-        "BITCOIN 4-YEAR CYCLE\n\n"
-        "Each rotation (circle) is a full market cycle\n"
-        "of 4 years, starting at the top of the\n"
-        "graph in 2009.\n\n"
-        "To differentiate between bull and bear\n"
-        "markets we use a momentum Z-Score\n"
-        "as a proxy indicator."
+    # Year markers in quadrants
+    fig.add_trace(go.Scatterpolar(
+        r=[7.5, 7.5, 7.5, 7.5],
+        theta=[45, 135, 225, 315],
+        mode='text',
+        text=["ANNÉE 1", "ANNÉE 2", "ANNÉE 3", "ANNÉE 4"],
+        textfont=dict(size=24, color="rgba(0,0,0,0.07)", family="serif"),
+        hoverinfo='none',
+        showlegend=False
+    ))
+
+    fig.update_layout(
+        polar=dict(
+            bgcolor='#F5F5DC',
+            angularaxis=dict(
+                direction='clockwise',
+                period=360,
+                visible=False,
+                rotation=90 # Start at Top (North)
+            ),
+            radialaxis=dict(
+                visible=False,
+                range=[0, 12]
+            )
+        ),
+        showlegend=False,
+        paper_bgcolor='#F5F5DC',
+        margin=dict(l=40, r=40, t=80, b=40),
+        height=900,
+        width=900,
+        title=dict(
+            text="BITCOIN 4-YEAR CYCLE - Hodler's Cheat Sheet",
+            x=0.5,
+            y=0.98,
+            font=dict(size=24, family="serif", color="darkgreen")
+        )
     )
-    fig.text(0.75, 0.85, info_text, fontsize=12, color=text_color,
-             bbox=dict(facecolor='white', alpha=0.5, edgecolor='green'))
 
-    # Legend for Z-Score
-    cbar_ax = fig.add_axes([0.75, 0.72, 0.15, 0.02])
-    cb = fig.colorbar(sc, cax=cbar_ax, orientation='horizontal')
-    cb.set_ticks([])
-    cbar_ax.text(0, -1.5, 'Value', transform=cbar_ax.transAxes, ha='left', fontsize=10)
-    cbar_ax.text(1, -1.5, 'Overheated', transform=cbar_ax.transAxes, ha='right', fontsize=10)
-    cbar_ax.set_title('Cycle Momentum (Z-Score)', fontsize=10, pad=5)
-
-    # Clean up axes
-    ax.set_yticklabels([])
-    ax.set_xticklabels([])
-    ax.spines['polar'].set_visible(False)
-    ax.grid(False)
-    ax.set_rmax(10)
-    ax.set_rmin(-3)
-
-    plt.tight_layout()
     return fig
 
 if __name__ == "__main__":
-    fig = get_cycle_plot()
-    if fig:
-        plt.savefig('cycle_test.png')
-        print("Plot saved to cycle_test.png")
+    # Test script - requires kaleido for write_image
+    try:
+        fig = get_cycle_plot()
+        if fig:
+            fig.write_image("cycle_plotly_test.png")
+            print("Plotly chart saved to cycle_plotly_test.png")
+    except Exception as e:
+        print(f"Could not save image (kaleido probably missing): {e}")

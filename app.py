@@ -77,12 +77,18 @@ elif selection == "On-chain Indicators":
 
 elif selection == "Bitcoin 4-Year Cycle":
     st.write("## Bitcoin 4-Year Cycle (Hodler's Cheat Sheet)")
-    fig = get_cycle_plot()
-    st.pyplot(fig)
+    with st.spinner("Génération du cycle de 4 ans..."):
+        fig = get_cycle_plot()
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.error("Impossible de charger les données du cycle.")
     st.write("""
     **Interprétation :**
-    Ce graphique polaire représente les cycles de 4 ans du Bitcoin. Chaque "bras" du cercle correspond à une phase psychologique du marché.
-    - Les courbes représentent les cycles historiques et le cycle actuel (2023-2027).
+    Ce graphique polaire interactif représente les cycles de 4 ans du Bitcoin.
+    - **Survol** : Passez la souris sur les points pour voir la date, le prix et le nombre de jours après le dernier halving.
+    - **Secteurs** : Chaque quart du cercle représente une année du cycle de 4 ans.
+    - **Phases** : Les étiquettes extérieures indiquent les phases psychologiques classiques du marché.
     - L'échelle radiale est logarithmique (prix du BTC).
     """)
 
