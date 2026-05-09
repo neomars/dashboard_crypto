@@ -34,7 +34,7 @@ elif selection == "BTC Fear & Greed Index":
         with st.spinner("Chargement des données en cours... Cela peut prendre quelques instants."):
             fig = get_btc_fear_greed_plot()
             if fig:
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(fig, use_container_width=True)
                 st.write("""
                 **Interprétation :**
                 - **Rouge** : Peur extrême (Extreme Fear) - Peut être une opportunité d'achat.
@@ -52,7 +52,7 @@ elif selection == "BTC Halving":
         with st.spinner("Récupération des données BTC + Halvings..."):
             fig = get_btc_halving_plot()
             if fig:
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(fig, use_container_width=True)
                 st.write("""
                 **À propos du Halving :**
                 Le halving du Bitcoin est un événement qui divise par deux la récompense de minage de nouveaux blocs.

@@ -6,7 +6,7 @@ Ce projet est une application web interactive construite avec Streamlit permetta
 
 - **Interface d'accueil** : Une page de bienvenue pour naviguer entre les différents outils.
 - **BTC Fear & Greed Index** : Visualisation du cours du Bitcoin (BTC) coloré dynamiquement en fonction de l'indice Fear & Greed (Peur et Cupidité).
-- **BTC Halving** : Visualisation des événements de halving passés et estimation dynamique du prochain halving basée sur le block height actuel.
+- **BTC Halving** : Visualisation des halvings passés et estimation du prochain. Inclut l'identification des sommets de cycle (Tops), le calcul des jours après halving pour chaque pic, et un survol dynamique affichant les jours depuis/avant les halvings.
 - **Architecture évolutive** : Facilité d'ajout de nouveaux indicateurs.
 - **Optimisation** : Utilisation du cache pour accélérer le chargement des données.
 
