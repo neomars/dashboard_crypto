@@ -6,6 +6,7 @@ Ce projet est une application web interactive construite avec Streamlit permetta
 
 - **Interface d'accueil** : Une page de bienvenue pour naviguer entre les différents outils.
 - **BTC Fear & Greed Index** : Visualisation du cours du Bitcoin (BTC) coloré dynamiquement en fonction de l'indice Fear & Greed (Peur et Cupidité).
+- **BTC Halving** : Visualisation des événements de halving passés et estimation dynamique du prochain halving basée sur le block height actuel.
 - **Architecture évolutive** : Facilité d'ajout de nouveaux indicateurs.
 - **Optimisation** : Utilisation du cache pour accélérer le chargement des données.
 
@@ -47,7 +48,8 @@ L'application sera accessible dans votre navigateur à l'adresse par défaut : `
 ## Structure du projet
 
 - `app.py` : Le point d'entrée principal de l'application Streamlit.
-- `btc_fear_greed.py` : Script contenant la logique de récupération des données et de génération du graphique pour l'indice Fear & Greed.
+- `btc_fear_greed.py` : Script pour l'indice Fear & Greed.
+- `btc_halving.py` : Script pour l'indicateur de Halving.
 - `requirements.txt` : Liste des bibliothèques Python nécessaires.
 - `README.md` : Instructions d'installation et d'utilisation.
 
