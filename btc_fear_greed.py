@@ -28,7 +28,7 @@ def get_btc_fear_greed_plot():
     fg = fg[['timestamp', 'fear_greed']].sort_values('timestamp').reset_index(drop=True)
 
     # BTC
-    btc = yf.download('BTC-USD', start='2018-01-01', interval='1d', progress=False)
+    btc = yf.download('BTC-USD', start='2010-01-01', interval='1d', progress=False)
     btc = btc[['Close']].reset_index()
     btc.columns = ['timestamp', 'close']
 
@@ -73,7 +73,7 @@ def get_btc_fear_greed_plot():
     ))
 
     fig.update_layout(
-        title="BTC Price (depuis 2018) — Coloré par Fear & Greed Index",
+        title="BTC Price (depuis 2010) — Coloré par Fear & Greed Index",
         xaxis_title="Date",
         yaxis_title="BTC Price (USD)",
         template="plotly_dark",

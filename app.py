@@ -12,6 +12,13 @@ selection = st.sidebar.selectbox(
     ["Accueil", "BTC Fear & Greed Index", "BTC Halving"]
 )
 
+scale_type = st.sidebar.radio(
+    "Type d'échelle (Axe Y)",
+    ["Linéaire", "Logarithmique"],
+    index=1 if selection == "BTC Halving" else 0
+)
+yaxis_type = "log" if scale_type == "Logarithmique" else "linear"
+
 if selection == "Accueil":
     st.write("## Bienvenue sur votre interface d'analyse financière.")
     st.write("""
@@ -34,6 +41,7 @@ elif selection == "BTC Fear & Greed Index":
         with st.spinner("Chargement des données en cours... Cela peut prendre quelques instants."):
             fig = get_btc_fear_greed_plot()
             if fig:
+                fig.update_layout(yaxis_type=yaxis_type)
                 st.plotly_chart(fig, use_container_width=True)
                 st.write("""
                 **Interprétation :**
@@ -52,6 +60,7 @@ elif selection == "BTC Halving":
         with st.spinner("Récupération des données BTC + Halvings..."):
             fig = get_btc_halving_plot()
             if fig:
+                fig.update_layout(yaxis_type=yaxis_type)
                 st.plotly_chart(fig, use_container_width=True)
                 st.write("""
                 **À propos du Halving :**
