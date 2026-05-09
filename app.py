@@ -2,6 +2,7 @@ import streamlit as st
 from btc_fear_greed import get_btc_fear_greed_plot
 from btc_halving import get_btc_halving_plot
 from onchain_indicator import get_onchain_plot
+from cycle_indicator import get_cycle_plot
 
 st.set_page_config(page_title="Crypto & Finance Dashboard", layout="wide")
 
@@ -10,7 +11,7 @@ st.title("📊 Tableau de Bord d'Indicateurs Financiers")
 st.sidebar.title("Navigation")
 selection = st.sidebar.selectbox(
     "Choisissez un indicateur",
-    ["Accueil", "BTC Fear & Greed Index", "BTC Halving", "On-chain Indicators"]
+    ["Accueil", "BTC Fear & Greed Index", "BTC Halving", "On-chain Indicators", "Bitcoin 4-Year Cycle"]
 )
 
 scale_type = st.sidebar.radio(
@@ -29,10 +30,9 @@ if selection == "Accueil":
 
     ### Indicateurs disponibles :
     - **BTC Fear & Greed Index** : Visualisez le prix du Bitcoin coloré selon l'indice de peur et de cupidité.
-    - **BTC Halving** : Suivez les halvings passés et l'estimation du prochain halving du Bitcoin.
-
-    ### Prochainement :
-    - D'autres indicateurs seront ajoutés prochainement.
+    - **BTC Halving** : Suivez les halvings passés, les sommets/creux de cycle et l'estimation du prochain halving.
+    - **On-chain Indicators** : Identifiez les zones de prix extrêmes avec des moyennes mobiles historiques (200w SMA, Realized Price, Pi Cycle).
+    - **Bitcoin 4-Year Cycle** : Une roue psychologique pour visualiser l'évolution du prix à travers les cycles de 4 ans.
     """)
 
 elif selection == "BTC Fear & Greed Index":
@@ -74,6 +74,17 @@ elif selection == "On-chain Indicators":
                 st.error("Impossible de récupérer les données pour le moment.")
     except Exception as e:
         st.error(f"Une erreur est survenue : {e}")
+
+elif selection == "Bitcoin 4-Year Cycle":
+    st.write("## Bitcoin 4-Year Cycle (Hodler's Cheat Sheet)")
+    fig = get_cycle_plot()
+    st.pyplot(fig)
+    st.write("""
+    **Interprétation :**
+    Ce graphique polaire représente les cycles de 4 ans du Bitcoin. Chaque "bras" du cercle correspond à une phase psychologique du marché.
+    - Les courbes représentent les cycles historiques et le cycle actuel (2023-2027).
+    - L'échelle radiale est logarithmique (prix du BTC).
+    """)
 
 elif selection == "BTC Halving":
     st.write("## BTC Halving")
