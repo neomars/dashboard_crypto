@@ -49,8 +49,9 @@ def get_btc_halving_plot():
 
     btc['days_after'], btc['days_before'] = zip(*btc['timestamp'].map(get_days_info))
 
-    # ====================== Identification des Tops ======================
+    # ====================== Identification des Tops & Bottoms ======================
     tops = []
+    bottoms = []
     for i in range(len(all_halvings) - 1):
         start_date = all_halvings[i]
         end_date = all_halvings[i+1]
@@ -59,6 +60,9 @@ def get_btc_halving_plot():
         if not period_data.empty:
             top_row = period_data.loc[period_data['close'].idxmax()]
             tops.append(top_row)
+
+            bottom_row = period_data.loc[period_data['close'].idxmin()]
+            bottoms.append(bottom_row)
 
     # ====================== Graphique ======================
     fig = go.Figure()
@@ -101,6 +105,19 @@ def get_btc_halving_plot():
             text=[f"Top: {top['days_after']}j après"],
             textposition="top center",
             marker=dict(color='white', size=14, symbol='star', line=dict(color='black', width=1)),
+            showlegend=False
+        ))
+
+    # Bottoms
+    for bottom in bottoms:
+        fig.add_trace(go.Scatter(
+            x=[bottom['timestamp']],
+            y=[bottom['close']],
+            mode='markers+text',
+            name='Cycle Bottom',
+            text=[f"Bottom: {bottom['days_after']}j après"],
+            textposition="bottom center",
+            marker=dict(color='red', size=12, symbol='x'),
             showlegend=False
         ))
 
