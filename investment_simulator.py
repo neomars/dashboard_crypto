@@ -152,8 +152,14 @@ def get_simulator_plot(history_df):
 
     for h in halvings:
         if history_df['Date'].min() <= h <= history_df['Date'].max():
-            # Convert to ISO string to avoid Plotly mean() type error on some versions
-            fig.add_vline(x=h.isoformat(), line_dash="dot", line_color="red", annotation_text="Halving")
+            fig.add_shape(
+                type="line", x0=h, x1=h, y0=0, y1=1,
+                yref="paper", line=dict(color="red", width=1, dash="dot")
+            )
+            fig.add_annotation(
+                x=h, y=0.95, yref="paper", text="Halving",
+                showarrow=False, font=dict(color="red", size=10)
+            )
 
     fig.update_layout(
         title="Simulateur d'Investissement Bitcoin",
