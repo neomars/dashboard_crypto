@@ -87,7 +87,7 @@ def get_btc_halving_plot():
     for h in known_halvings:
         date = pd.to_datetime(h["date"])
         if date >= btc['timestamp'].min():
-            fig.add_vline(x=date, line=dict(color="red", width=2, dash="dash"))
+            fig.add_vline(x=date.isoformat(), line=dict(color="red", width=2, dash="dash"))
             fig.add_annotation(
                 x=date, y=1, yref="paper", yanchor="top",
                 text=f"Halving {h['date']}",
@@ -122,7 +122,7 @@ def get_btc_halving_plot():
         ))
 
     # Prochain halving
-    fig.add_vline(x=estimated_date, line=dict(color="lime", width=3, dash="dot"))
+    fig.add_vline(x=estimated_date.isoformat(), line=dict(color="lime", width=3, dash="dot"))
     fig.add_annotation(
         x=estimated_date, y=0.9, yref="paper", yanchor="top",
         text=f"Prochain Halving<br>~{estimated_date.strftime('%Y-%m-%d')}",
