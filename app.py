@@ -3,6 +3,7 @@ from btc_fear_greed import get_btc_fear_greed_plot
 from btc_halving import get_btc_halving_plot
 from onchain_indicator import get_onchain_plot
 from cycle_indicator import get_cycle_plot
+from sth_sopr import get_sth_sopr_plot
 
 st.set_page_config(page_title="Crypto & Finance Dashboard", layout="wide")
 
@@ -11,7 +12,7 @@ st.title("📊 Tableau de Bord d'Indicateurs Financiers")
 st.sidebar.title("Navigation")
 selection = st.sidebar.selectbox(
     "Choisissez un indicateur",
-    ["Accueil", "BTC Fear & Greed Index", "BTC Halving", "On-chain Indicators", "Bitcoin 4-Year Cycle"]
+    ["Accueil", "BTC Fear & Greed Index", "BTC Halving", "On-chain Indicators", "Bitcoin 4-Year Cycle", "STH-SOPR"]
 )
 
 scale_type = st.sidebar.radio(
@@ -33,47 +34,35 @@ if selection == "Accueil":
     - **BTC Halving** : Suivez les halvings passés, les sommets/creux de cycle et l'estimation du prochain halving.
     - **On-chain Indicators** : Identifiez les zones de prix extrêmes avec des moyennes mobiles historiques (200w SMA, Realized Price, Pi Cycle).
     - **Bitcoin 4-Year Cycle** : Une roue psychologique pour visualiser l'évolution du prix à travers les cycles de 4 ans.
+    - **STH-SOPR** : Ratio de profit des détenteurs à court terme via Dune Analytics.
     """)
 
 elif selection == "BTC Fear & Greed Index":
     st.write("## BTC Fear & Greed Index")
-
     try:
-        with st.spinner("Chargement des données en cours... Cela peut prendre quelques instants."):
+        with st.spinner("Chargement des données en cours..."):
             fig = get_btc_fear_greed_plot()
             if fig:
                 fig.update_layout(yaxis_type=yaxis_type)
                 st.plotly_chart(fig, use_container_width=True)
-                st.write("""
-                **Interprétation :**
-                - **Rouge** : Peur extrême (Extreme Fear) - Peut être une opportunité d'achat.
-                - **Vert** : Cupidité extrême (Extreme Greed) - Peut être un signe de correction imminente.
-                """)
+                st.write("**Interprétation :** Rouge = Peur extrême, Vert = Cupidité extrême.")
             else:
-                st.error("Impossible de récupérer les données pour le moment.")
+                st.error("Impossible de récupérer les données.")
     except Exception as e:
-        st.error(f"Une erreur est survenue : {e}")
+        st.error(f"Erreur : {e}")
 
 elif selection == "On-chain Indicators":
     st.write("## On-chain Top & Bottom Indicators")
-
     try:
         with st.spinner("Calcul des indicateurs On-chain..."):
             fig = get_onchain_plot()
             if fig:
                 fig.update_layout(yaxis_type=yaxis_type)
                 st.plotly_chart(fig, use_container_width=True)
-                st.write("""
-                **Indicateurs inclus :**
-                - **200-week SMA** : Souvent considéré comme le support ultime en marché baissier.
-                - **Realized Price** : Prix moyen d'achat de tous les Bitcoins sur le réseau (approximation).
-                - **Pi Cycle Top** : Utilise le croisement de deux moyennes mobiles pour identifier les sommets de cycle.
-                - **2-year SMA Multiplier** : Aide à identifier les zones de surachat et survente.
-                """)
             else:
-                st.error("Impossible de récupérer les données pour le moment.")
+                st.error("Impossible de récupérer les données.")
     except Exception as e:
-        st.error(f"Une erreur est survenue : {e}")
+        st.error(f"Erreur : {e}")
 
 elif selection == "Bitcoin 4-Year Cycle":
     st.write("## Bitcoin 4-Year Cycle (Hodler's Cheat Sheet)")
@@ -83,30 +72,34 @@ elif selection == "Bitcoin 4-Year Cycle":
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.error("Impossible de charger les données du cycle.")
-    st.write("""
-    **Interprétation :**
-    Ce graphique polaire interactif représente les cycles de 4 ans du Bitcoin.
-    - **Survol** : Passez la souris sur les points pour voir la date, le prix et le nombre de jours après le dernier halving.
-    - **Secteurs** : Chaque quart du cercle représente une année du cycle de 4 ans.
-    - **Phases** : Les étiquettes extérieures indiquent les phases psychologiques classiques du marché.
-    - L'échelle radiale est logarithmique (prix du BTC).
-    """)
 
 elif selection == "BTC Halving":
     st.write("## BTC Halving")
-
     try:
         with st.spinner("Récupération des données BTC + Halvings..."):
             fig = get_btc_halving_plot()
             if fig:
                 fig.update_layout(yaxis_type=yaxis_type)
                 st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.error("Impossible de récupérer les données.")
+    except Exception as e:
+        st.error(f"Erreur : {e}")
+
+elif selection == "STH-SOPR":
+    st.write("## Bitcoin STH-SOPR (Short Term Holder SOPR)")
+    try:
+        with st.spinner("Récupération des données Dune Analytics..."):
+            fig = get_sth_sopr_plot()
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
                 st.write("""
-                **À propos du Halving :**
-                Le halving du Bitcoin est un événement qui divise par deux la récompense de minage de nouveaux blocs.
-                Il a lieu environ tous les 4 ans (tous les 210 000 blocs) et réduit l'offre de nouveaux Bitcoins, ce qui a historiquement eu un impact sur son prix.
+                **Interprétation du STH-SOPR :**
+                - **SOPR > 1** : Profit (Marché haussier).
+                - **SOPR < 1** : Perte (Marché baissier/Correction).
+                - **Ligne orange (1.0)** : Support/Résistance clé.
                 """)
             else:
-                st.error("Impossible de récupérer les données pour le moment.")
+                st.error("Impossible de récupérer les données SOPR.")
     except Exception as e:
-        st.error(f"Une erreur est survenue : {e}")
+        st.error(f"Erreur : {e}")

@@ -1,62 +1,59 @@
-# Dashboard d'Indicateurs Crypto & Finance
+# Dashboard d'Indicateurs Crypto et Financiers
 
-Ce projet est une application web interactive construite avec Streamlit permettant de visualiser divers indicateurs des marchés financiers et des cryptomonnaies.
+Ce projet est une application interactive basée sur **Streamlit** permettant de visualiser divers indicateurs du marché Bitcoin et des marchés financiers.
 
 ## Fonctionnalités
 
-- **Interface d'accueil** : Une page de bienvenue pour naviguer entre les différents outils.
-- **BTC Fear & Greed Index** : Visualisation du cours du Bitcoin (BTC) coloré dynamiquement en fonction de l'indice Fear & Greed (Peur et Cupidité).
-- **BTC Halving** : Visualisation des halvings passés et estimation du prochain. Inclut l'identification des sommets de cycle (Tops) et des creux (Bottoms), le calcul des jours après halving pour chaque point clé, et un survol dynamique.
-- **On-chain Indicators** : Analyse avancée utilisant des moyennes mobiles clés (200-week SMA, Pi Cycle Top, Realized Price) pour identifier les zones de retournement de marché.
-- **Bitcoin 4-Year Cycle** : Une "Hodler's Cheat Sheet" sous forme de graphique polaire pour visualiser les phases psychologiques des cycles de 4 ans.
-- **Architecture évolutive** : Facilité d'ajout de nouveaux indicateurs.
-- **Optimisation** : Utilisation du cache pour accélérer le chargement des données.
+L'application propose une interface de navigation latérale pour choisir parmi les indicateurs suivants :
+
+1.  **Indice Fear & Greed** : Visualisation du sentiment de marché corrélé au prix du Bitcoin.
+2.  **Bitcoin Halving** : Analyse des cycles de halving avec identification des sommets et des creux de cycle.
+3.  **Indicateurs On-chain** : Moyenne mobile 200 semaines (SMA), Pi Cycle Top, et Prix Réalisé (Realized Price).
+4.  **Cycle de 4 ans (Bitcoin)** : Graphique polaire interactif divisé en 4 années (quadrants), permettant de suivre la progression du prix par rapport au dernier halving.
+5.  **STH-SOPR (Short Term Holder SOPR)** : Analyse de la rentabilité des détenteurs à court terme via l'API Dune Analytics.
 
 ## Installation
 
-### Prérequis
+### 1. Prérequis
+Assurez-vous d'avoir Python 3.8+ installé.
 
-Assurez-vous d'avoir Python 3.8+ installé sur votre machine.
+### 2. Cloner le dépôt
+```bash
+git clone <votre-repo>
+cd <votre-repo>
+```
 
-### Étapes d'installation
+### 3. Installer les dépendances
+```bash
+pip install -r requirements.txt
+```
 
-1. **Cloner le dépôt** (ou télécharger les fichiers) :
-   ```bash
-   git clone <url-du-depot>
-   cd dashboard_crypto
-   ```
-
-2. **Créer un environnement virtuel** (recommandé) :
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # Sur Windows: venv\Scripts\activate
-   ```
-
-3. **Installer les dépendances** :
-   ```bash
-   pip install -r requirements.txt
-   ```
+### 4. Configuration de l'API Dune (pour le SOPR)
+L'indicateur STH-SOPR nécessite une clé API Dune Analytics.
+1. Créez un fichier nommé `config.ini` à la racine du projet.
+2. Ajoutez-y votre clé API comme suit :
+```ini
+[DUNE]
+api_key = VOTRE_CLE_API_ICI
+query_id = 6987189
+```
+*Note : Le fichier `config.ini` est ignoré par git pour protéger votre clé.*
 
 ## Utilisation
 
-Pour lancer l'application Streamlit, exécutez la commande suivante à la racine du projet :
+Pour lancer l'application, exécutez la commande suivante :
 
 ```bash
 streamlit run app.py
 ```
 
-L'application sera accessible dans votre navigateur à l'adresse par défaut : `http://localhost:8501`.
+L'interface s'ouvrira automatiquement dans votre navigateur par défaut (généralement à l'adresse `http://localhost:8501`).
 
-## Structure du projet
+## Structure du Projet
 
-- `app.py` : Le point d'entrée principal de l'application Streamlit.
-- `btc_fear_greed.py` : Script pour l'indice Fear & Greed.
-- `btc_halving.py` : Script pour l'indicateur de Halving.
-- `onchain_indicator.py` : Script pour les indicateurs on-chain.
-- `cycle_indicator.py` : Script pour le graphique polaire du cycle de 4 ans.
-- `requirements.txt` : Liste des bibliothèques Python nécessaires.
-- `README.md` : Instructions d'installation et d'utilisation.
-
-## Auteurs
-
-- [Votre Nom/Pseudo]
+- `app.py` : Point d'entrée principal de l'application Streamlit.
+- `btc_fear_greed.py` : Logique de l'indicateur Fear & Greed.
+- `btc_halving.py` : Analyse des cycles de halving.
+- `onchain_indicator.py` : Métriques On-chain (SMA 200, Pi Cycle, etc.).
+- `cycle_indicator.py` : Graphique polaire du cycle de 4 ans (Plotly).
+- `sth_sopr.py` : Récupération et visualisation des données SOPR via Dune.
