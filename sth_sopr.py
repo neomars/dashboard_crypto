@@ -29,7 +29,10 @@ def get_sth_sopr_plot():
 
     try:
         response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code != 200:
+        if response.status_code == 401:
+            st.error("Erreur API Dune : 401 (Non autorisé). Veuillez vérifier que vous avez remplacé 'VOTRE_CLE_API_ICI' par une clé API valide dans le fichier config.ini.")
+            return None
+        elif response.status_code != 200:
             st.error(f"Erreur API Dune : {response.status_code}")
             return None
 
