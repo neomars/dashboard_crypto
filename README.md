@@ -35,9 +35,7 @@ L'indicateur STH-SOPR nécessite une clé API Dune Analytics.
 ```ini
 [DUNE]
 api_key = VOTRE_CLE_API_ICI
-query_id = 6764134
 ```
-*Note : Le `query_id` peut varier si la requête originale est supprimée ou rendue privée. Vous pouvez trouver d'autres requêtes publiques sur Dune.com (ex: cherchez "Bitcoin SOPR") et copier l'ID présent dans l'URL : `dune.com/queries/<ID>`.*
 
 *Note : Le fichier `config.ini` est ignoré par git pour protéger votre clé.*
 

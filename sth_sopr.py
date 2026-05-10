@@ -19,23 +19,7 @@ def get_sth_sopr_plot():
         return None
 
     # ====================== Requête Dune - SOPR ======================
-    try:
-        raw_query_id = config['DUNE']['query_id'].strip().strip('"').strip("'")
-        # Extraction de l'ID s'il s'agit d'une URL complète
-        if '/' in raw_query_id:
-            # On prend la partie après /queries/ ou le dernier segment numérique
-            QUERY_ID = raw_query_id.split('/')[-1]
-            if not QUERY_ID.isdigit(): # Cas où l'URL finit par /visualization_id
-                 QUERY_ID = raw_query_id.split('/')[-2]
-        else:
-            QUERY_ID = raw_query_id
-    except KeyError:
-        QUERY_ID = "6764134" # Default/Fallback
-
-    if not QUERY_ID.isdigit():
-        st.error(f"L'ID de requête fourni ('{QUERY_ID}') n'est pas valide. Il doit s'agir d'un nombre.")
-        return None
-
+    QUERY_ID = "6764134" # ID fixe pour LTH/STH SOPR
     url = f"https://api.dune.com/api/v1/query/{QUERY_ID}/results"
     headers = {
         "X-Dune-API-Key": DUNE_API_KEY,
