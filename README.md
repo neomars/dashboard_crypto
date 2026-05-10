@@ -11,6 +11,7 @@ L'application propose une interface de navigation latérale pour choisir parmi l
 3.  **Indicateurs On-chain** : Moyenne mobile 200 semaines (SMA), Pi Cycle Top, et Prix Réalisé (Realized Price).
 4.  **Cycle de 4 ans (Bitcoin)** : Graphique polaire interactif divisé en 4 années (quadrants), permettant de suivre la progression du prix par rapport au dernier halving.
 5.  **SOPR (LTH & STH)** : Analyse de la rentabilité des détenteurs à court (STH) et long terme (LTH) via l'API Dune Analytics.
+6.  **Simulateur d'Investissement** : Simulation d'une stratégie de levier dynamique (x1 -> x2 lors d'une baisse de x%) avec sortie progressive hebdomadaire.
 
 ## Installation
 
@@ -57,3 +58,4 @@ L'interface s'ouvrira automatiquement dans votre navigateur par défaut (génér
 - `onchain_indicator.py` : Métriques On-chain (SMA 200, Pi Cycle, etc.).
 - `cycle_indicator.py` : Graphique polaire du cycle de 4 ans (Plotly).
 - `sth_sopr.py` : Récupération et visualisation des données SOPR via Dune.
+- `investment_simulator.py` : Logique et graphique du simulateur d'investissement.
