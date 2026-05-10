@@ -13,16 +13,16 @@ def get_sth_sopr_plot():
     config.read('config.ini')
 
     try:
-        DUNE_API_KEY = config['DUNE']['api_key']
+        DUNE_API_KEY = config['DUNE']['api_key'].strip().strip('"').strip("'")
     except KeyError:
         st.error("Clé API Dune manquante dans config.ini")
         return None
 
     # ====================== Requête Dune - STH-SOPR ======================
     try:
-        QUERY_ID = config['DUNE']['query_id']
+        QUERY_ID = config['DUNE']['query_id'].strip().strip('"').strip("'")
     except KeyError:
-        QUERY_ID = 6987189 # Default/Fallback
+        QUERY_ID = "6987189" # Default/Fallback
 
     url = f"https://api.dune.com/api/v1/query/{QUERY_ID}/results"
     headers = {
@@ -37,6 +37,13 @@ def get_sth_sopr_plot():
             return None
         elif response.status_code == 404:
             st.error(f"Erreur API Dune : 404 (Non trouvé). La requête avec l'ID {QUERY_ID} n'existe pas ou est privée. Veuillez vérifier le 'query_id' dans config.ini.")
+            return None
+        elif response.status_code == 400:
+            try:
+                err_msg = response.json().get('error', response.text)
+            except:
+                err_msg = response.text
+            st.error(f"Erreur API Dune : 400 (Requête invalide). Détails : {err_msg}")
             return None
         elif response.status_code != 200:
             st.error(f"Erreur API Dune : {response.status_code}")
