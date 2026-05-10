@@ -10,7 +10,7 @@ L'application propose une interface de navigation latérale pour choisir parmi l
 2.  **Bitcoin Halving** : Analyse des cycles de halving avec identification des sommets et des creux de cycle.
 3.  **Indicateurs On-chain** : Moyenne mobile 200 semaines (SMA), Pi Cycle Top, et Prix Réalisé (Realized Price).
 4.  **Cycle de 4 ans (Bitcoin)** : Graphique polaire interactif divisé en 4 années (quadrants), permettant de suivre la progression du prix par rapport au dernier halving.
-5.  **STH-SOPR (Short Term Holder SOPR)** : Analyse de la rentabilité des détenteurs à court terme via l'API Dune Analytics.
+5.  **SOPR (LTH & STH)** : Analyse de la rentabilité des détenteurs à court (STH) et long terme (LTH) via l'API Dune Analytics.
 
 ## Installation
 
@@ -35,9 +35,7 @@ L'indicateur STH-SOPR nécessite une clé API Dune Analytics.
 ```ini
 [DUNE]
 api_key = VOTRE_CLE_API_ICI
-query_id = 6987189
 ```
-*Note : Le `query_id` peut varier si la requête originale est supprimée ou rendue privée. Vous pouvez trouver d'autres requêtes publiques sur Dune.com (ex: cherchez "Bitcoin STH-SOPR") et copier l'ID présent dans l'URL : `dune.com/queries/<ID>`.*
 
 *Note : Le fichier `config.ini` est ignoré par git pour protéger votre clé.*
 

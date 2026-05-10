@@ -18,24 +18,8 @@ def get_sth_sopr_plot():
         st.error("Clé API Dune manquante dans config.ini")
         return None
 
-    # ====================== Requête Dune - STH-SOPR ======================
-    try:
-        raw_query_id = config['DUNE']['query_id'].strip().strip('"').strip("'")
-        # Extraction de l'ID s'il s'agit d'une URL complète
-        if '/' in raw_query_id:
-            # On prend la partie après /queries/ ou le dernier segment numérique
-            QUERY_ID = raw_query_id.split('/')[-1]
-            if not QUERY_ID.isdigit(): # Cas où l'URL finit par /visualization_id
-                 QUERY_ID = raw_query_id.split('/')[-2]
-        else:
-            QUERY_ID = raw_query_id
-    except KeyError:
-        QUERY_ID = "6987189" # Default/Fallback
-
-    if not QUERY_ID.isdigit():
-        st.error(f"L'ID de requête fourni ('{QUERY_ID}') n'est pas valide. Il doit s'agir d'un nombre.")
-        return None
-
+    # ====================== Requête Dune - SOPR ======================
+    QUERY_ID = "6764134" # ID fixe pour LTH/STH SOPR
     url = f"https://api.dune.com/api/v1/query/{QUERY_ID}/results"
     headers = {
         "X-Dune-API-Key": DUNE_API_KEY,
@@ -70,13 +54,28 @@ def get_sth_sopr_plot():
         return None
 
     df = pd.DataFrame(data)
-    df['time'] = pd.to_datetime(df['time'])
-    df = df.sort_values('time').reset_index(drop=True)
-    df = df.rename(columns={'sopr': 'STH_SOPR'})
+    # Identification de la colonne temporelle
+    time_col = None
+    for c in ['time', 'block_time', 'date', 'day']:
+        if c in df.columns:
+            time_col = c
+            break
+
+    if not time_col:
+        st.error(f"Impossible de trouver une colonne temporelle dans les données. Colonnes dispos : {list(df.columns)}")
+        return None
+
+    df[time_col] = pd.to_datetime(df[time_col])
+    df = df.sort_values(time_col).reset_index(drop=True)
+
+    # Identification des colonnes SOPR (STH, LTH ou simplement SOPR)
+    sopr_cols = [c for c in df.columns if 'sopr' in c.lower()]
+    if not sopr_cols:
+        st.error(f"Aucune colonne SOPR détectée. Colonnes dispos : {list(df.columns)}")
+        return None
 
     # ====================== BTC Price ======================
-    # On commence à la date minimale des données SOPR pour optimiser
-    min_date = df['time'].min().strftime('%Y-%m-%d')
+    min_date = df[time_col].min().strftime('%Y-%m-%d')
     btc = yf.download('BTC-USD', start=min_date, interval='1d', progress=False)
 
     if isinstance(btc.columns, pd.MultiIndex):
@@ -84,24 +83,25 @@ def get_sth_sopr_plot():
     else:
         close_prices = btc['Close']
 
-    btc_df = pd.DataFrame({'time': btc.index, 'BTC_Price': close_prices.values})
-    btc_df['time'] = pd.to_datetime(btc_df['time']).dt.tz_localize(None)
-    df['time'] = df['time'].dt.tz_localize(None)
+    btc_df = pd.DataFrame({'time_merge': btc.index, 'BTC_Price': close_prices.values})
+    btc_df['time_merge'] = pd.to_datetime(btc_df['time_merge']).dt.tz_localize(None)
+    df[time_col] = df[time_col].dt.tz_localize(None)
 
     # Merge
-    df = pd.merge(df, btc_df, on='time', how='left')
+    df = pd.merge(df, btc_df, left_on=time_col, right_on='time_merge', how='left')
 
     # ====================== Graphique ======================
     fig = go.Figure()
 
-    # STH-SOPR
-    fig.add_trace(go.Scatter(
-        x=df['time'],
-        y=df['STH_SOPR'],
-        mode='lines',
-        name='STH-SOPR',
-        line=dict(color='#00FFAA', width=2)
-    ))
+    colors = ['#00FFAA', '#FF00AA', '#AAFF00', '#00AAFF']
+    for i, col in enumerate(sopr_cols):
+        fig.add_trace(go.Scatter(
+            x=df[time_col],
+            y=df[col],
+            mode='lines',
+            name=col.upper().replace('_', ' '),
+            line=dict(color=colors[i % len(colors)], width=2)
+        ))
 
     # BTC Price
     fig.add_trace(go.Scatter(
@@ -116,11 +116,11 @@ def get_sth_sopr_plot():
     # Ligne de base SOPR = 1
     fig.add_shape(
         type="line", line=dict(color="orange", width=1, dash="dash"),
-        x0=df['time'].min(), x1=df['time'].max(), y0=1, y1=1
+        x0=df[time_col].min(), x1=df[time_col].max(), y0=1, y1=1
     )
 
     fig.update_layout(
-        title="Bitcoin - STH-SOPR (Short Term Holder Output Profit Ratio)",
+        title="Bitcoin - SOPR (LTH & STH Output Profit Ratio)",
         xaxis_title="Date",
         yaxis=dict(
             title="STH-SOPR",

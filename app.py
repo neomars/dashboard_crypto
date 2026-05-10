@@ -12,7 +12,7 @@ st.title("📊 Tableau de Bord d'Indicateurs Financiers")
 st.sidebar.title("Navigation")
 selection = st.sidebar.selectbox(
     "Choisissez un indicateur",
-    ["Accueil", "BTC Fear & Greed Index", "BTC Halving", "On-chain Indicators", "Bitcoin 4-Year Cycle", "STH-SOPR"]
+    ["Accueil", "BTC Fear & Greed Index", "BTC Halving", "On-chain Indicators", "Bitcoin 4-Year Cycle", "SOPR (LTH/STH)"]
 )
 
 scale_type = st.sidebar.radio(
@@ -34,7 +34,7 @@ if selection == "Accueil":
     - **BTC Halving** : Suivez les halvings passés, les sommets/creux de cycle et l'estimation du prochain halving.
     - **On-chain Indicators** : Identifiez les zones de prix extrêmes avec des moyennes mobiles historiques (200w SMA, Realized Price, Pi Cycle).
     - **Bitcoin 4-Year Cycle** : Une roue psychologique pour visualiser l'évolution du prix à travers les cycles de 4 ans.
-    - **STH-SOPR** : Ratio de profit des détenteurs à court terme via Dune Analytics.
+    - **SOPR (LTH/STH)** : Ratio de profit des détenteurs à court et long terme via Dune Analytics.
     """)
 
 elif selection == "BTC Fear & Greed Index":
@@ -86,18 +86,18 @@ elif selection == "BTC Halving":
     except Exception as e:
         st.error(f"Erreur : {e}")
 
-elif selection == "STH-SOPR":
-    st.write("## Bitcoin STH-SOPR (Short Term Holder SOPR)")
+elif selection == "SOPR (LTH/STH)":
+    st.write("## Bitcoin SOPR (LTH & STH)")
     try:
         with st.spinner("Récupération des données Dune Analytics..."):
             fig = get_sth_sopr_plot()
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
                 st.write("""
-                **Interprétation du STH-SOPR :**
-                - **SOPR > 1** : Profit (Marché haussier).
-                - **SOPR < 1** : Perte (Marché baissier/Correction).
-                - **Ligne orange (1.0)** : Support/Résistance clé.
+                **Interprétation du SOPR :**
+                - **SOPR > 1** : Les investisseurs réalisent des profits.
+                - **SOPR < 1** : Les investisseurs vendent à perte.
+                - **Ligne orange (1.0)** : Niveau psychologique clé (Support en Bull market, Résistance en Bear market).
                 """)
             else:
                 st.error("Impossible de récupérer les données SOPR.")
