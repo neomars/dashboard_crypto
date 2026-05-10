@@ -1,0 +1,53 @@
+[
+    {
+        "id": "fear_greed",
+        "name": "BTC Fear & Greed Index",
+        "module": "btc_fear_greed",
+        "function": "get_btc_fear_greed_plot",
+        "description": "Visualisez le prix du Bitcoin coloré selon l'indice de peur et de cupidité.",
+        "default_scale": "linear",
+        "interpretation": "Rouge = Peur extrême, Vert = Cupidité extrême."
+    },
+    {
+        "id": "halving",
+        "name": "BTC Halving",
+        "module": "btc_halving",
+        "function": "get_btc_halving_plot",
+        "description": "Suivez les halvings passés, les sommets/creux de cycle et l'estimation du prochain halving.",
+        "default_scale": "logarithmique"
+    },
+    {
+        "id": "onchain",
+        "name": "On-chain Indicators",
+        "module": "onchain_indicator",
+        "function": "get_onchain_plot",
+        "description": "Identifiez les zones de prix extrêmes avec des moyennes mobiles historiques (200w SMA, Realized Price, Pi Cycle).",
+        "default_scale": "logarithmique"
+    },
+    {
+        "id": "cycle",
+        "name": "Bitcoin 4-Year Cycle",
+        "module": "cycle_indicator",
+        "function": "get_cycle_plot",
+        "description": "Une roue psychologique pour visualiser l'évolution du prix à travers les cycles de 4 ans.",
+        "default_scale": "linear"
+    },
+    {
+        "id": "sopr",
+        "name": "SOPR (LTH/STH)",
+        "module": "sth_sopr",
+        "function": "get_sth_sopr_plot",
+        "description": "Ratio de profit des détenteurs à court et long terme via Dune Analytics.",
+        "default_scale": "linear",
+        "interpretation": "SOPR > 1 : Profit (Bull market). SOPR < 1 : Perte (Bear market). Ligne orange (1.0) : Support/Résistance clé."
+    },
+    {
+        "id": "simulator",
+        "name": "Simulateur d'Investissement",
+        "module": "investment_simulator",
+        "function": "get_simulator_plot",
+        "description": "Testez une stratégie de levier dynamique basée sur les baisses de prix.",
+        "default_scale": "logarithmique",
+        "is_special": true
+    }
+]
