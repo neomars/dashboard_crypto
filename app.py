@@ -51,7 +51,7 @@ else:
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("Date de début", value=datetime(2017, 1, 1))
-            initial_capital = st.number_input("Investissement initial (USD)", value=10000, step=1000)
+            initial_capital = st.number_input("Investissement initial (USD)", value=10000.0, step=100.0)
         with col2:
             end_date = st.date_input("Date de fin", value=datetime.now())
             target_lev = st.number_input("Effet de levier cible", value=2.0, step=0.1, min_value=1.0)

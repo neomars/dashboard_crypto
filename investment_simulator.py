@@ -24,7 +24,8 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     # State
     # current_mode: 'X1' or 'XL'
     current_mode = 'X1'
-    peak_price = btc_price_start
+    all_time_high = btc_price_start
+    waiting_for_recovery = False
 
     # Position tracking
     # If X1: btc_units = portfolio_value / price
@@ -44,16 +45,19 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
         current_price = df.iloc[i]['Close']
 
         if current_mode == 'X1':
-            # Update peak
-            if current_price > peak_price:
-                peak_price = current_price
+            # Update ATH de la séquence
+            if current_price > all_time_high:
+                all_time_high = current_price
+                waiting_for_recovery = False # New ATH means we are no longer in a "drop" state relative to previous ATH
 
             # Current equity
             portfolio_value = btc_units * current_price
 
-            # Check for drop from peak
-            price_drop = (current_price - peak_price) / peak_price
-            if price_drop <= -drop_threshold_pct / 100.0:
+            # Check for drop from ALL TIME HIGH
+            price_drop_from_ath = (current_price - all_time_high) / all_time_high
+
+            # Condition de déclenchement : baisse de X% ET on n'est pas en train d'attendre une remontée
+            if price_drop_from_ath <= -drop_threshold_pct / 100.0 and not waiting_for_recovery:
                 # SWITCH TO XL
                 current_mode = 'XL'
                 closing_start_date = current_date
@@ -99,12 +103,16 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                 # If 10 weeks passed, we are back to full X1 (debt should be 0 or small)
                 if weeks_passed >= 10:
                     current_mode = 'X1'
-                    # Reset peak to current price to avoid immediate re-trigger
-                    peak_price = current_price
-                    # Debt should ideally be 0 here if calculations are correct
+                    # On revient en X1. On active l'attente de récupération si on est toujours sous le seuil de drop
                     portfolio_value = (btc_units * current_price) - debt
                     btc_units = portfolio_value / current_price
                     debt = 0.0
+
+                    # Si on est toujours en baisse de X% par rapport à l'ATH, on attend de repasser au dessus
+                    # du seuil avant de pouvoir redéclencher (pour "perdre à nouveau X%")
+                    price_drop_from_ath = (current_price - all_time_high) / all_time_high
+                    if price_drop_from_ath <= -drop_threshold_pct / 100.0:
+                        waiting_for_recovery = True
 
         history.append({
             'Date': current_date,
