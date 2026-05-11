@@ -120,7 +120,7 @@ def get_sth_sopr_plot():
     )
 
     fig.update_layout(
-        title="Bitcoin - SOPR (LTH & STH Output Profit Ratio)",
+        title="Bitcoin - STH-SOPR (Short Term Holder Output Profit Ratio)",
         xaxis_title="Date",
         yaxis=dict(
             title="STH-SOPR",

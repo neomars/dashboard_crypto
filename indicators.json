@@ -34,12 +34,12 @@
     },
     {
         "id": "sopr",
-        "name": "SOPR (LTH/STH)",
+        "name": "STH-SOPR",
         "module": "sth_sopr",
         "function": "get_sth_sopr_plot",
-        "description": "Ratio de profit des détenteurs à court et long terme via Dune Analytics.",
+        "description": "Ratio de profit des détenteurs à court terme via Dune Analytics.",
         "default_scale": "linear",
-        "interpretation": "SOPR > 1 : Profit (Bull market). SOPR < 1 : Perte (Bear market). Ligne orange (1.0) : Support/Résistance clé."
+        "interpretation": "SOPR > 1 : Profit (Marché haussier). SOPR < 1 : Perte (Marché baissier/Correction). Ligne orange (1.0) : Support/Résistance clé."
     },
     {
         "id": "simulator",

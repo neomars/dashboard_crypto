@@ -26,8 +26,9 @@ def run_simulation(start_date, end_date, drop_threshold_pct, target_leverage=2.0
     states = [] # 'Normal', 'Closing'
 
     current_state = 'Normal'
-    entry_price = df.iloc[0]['Close']
+    peak_price = df.iloc[0]['Close']
     leverage = 1.0
+    debt = 0.0
 
     closing_start_date = None
     initial_position_to_close = 0
@@ -40,32 +41,33 @@ def run_simulation(start_date, end_date, drop_threshold_pct, target_leverage=2.0
         current_price = df.iloc[i]['Close']
         current_date = df.index[i]
 
-        # Calculate current equity
-        # Equity = Cash + (BTC_units * Price) - Debt
-        # Debt exists if leverage > 1.
-        # Initial Debt = Position_Value * (Leverage - 1) / Leverage ?
-        # Actually, simpler:
-        # If we are x1: Equity = btc_units * current_price
-        # If we switch to x2: we buy more BTC using debt.
-        # New_btc_units = old_btc_units * 2.
-        # Debt = old_btc_units * entry_price_at_switch
-
         if current_state == 'Normal':
-            # Check for drop
-            price_drop = (current_price - entry_price) / entry_price
-            if price_drop <= -drop_threshold_pct / 100.0:
+            # Update peak if new high
+            if current_price > peak_price:
+                peak_price = current_price
+
+            # Check for drop from PEAK
+            price_drop_from_peak = (current_price - peak_price) / peak_price
+
+            if price_drop_from_peak <= -drop_threshold_pct / 100.0:
                 current_state = 'Closing'
                 closing_start_date = current_date
-                # Double the position using debt
-                # New Equity stays the same at the moment of switch
-                # Position becomes 2x Equity
+
+                # Passer en levier : on double la position
                 current_equity = btc_units * current_price
-                btc_units = (current_equity * target_leverage) / current_price
-                debt = current_equity * (target_leverage - 1.0)
+
+                # On emprunte pour acheter plus
+                # Position totale = equity * target_leverage
+                # btc_units total = (equity * target_leverage) / price
+                new_total_units = (current_equity * target_leverage) / current_price
+                added_units = new_total_units - btc_units
+                debt = added_units * current_price
+
+                btc_units = new_total_units
                 initial_position_to_close = btc_units
                 weeks_closed = 0
 
-            current_equity = btc_units * current_price
+            current_equity = btc_units * current_price - debt
 
         elif current_state == 'Closing':
             # Every 7 days, close 1/10th
@@ -89,13 +91,13 @@ def run_simulation(start_date, end_date, drop_threshold_pct, target_leverage=2.0
                 weeks_closed += 1
 
                 if weeks_closed >= 10 or btc_units <= 0:
-                    # Simulation says: "rachète du btc"
+                    # Reset to Normal state (Leverage x1)
                     total_equity = cash + (btc_units * current_price) - debt
-                    btc_units = total_equity / current_price
+                    btc_units = max(0, total_equity / current_price)
                     cash = 0
                     debt = 0
                     current_state = 'Normal'
-                    entry_price = current_price
+                    peak_price = current_price # Reset peak to current
 
             current_equity = cash + (btc_units * current_price) - debt
 
