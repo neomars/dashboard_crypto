@@ -55,6 +55,7 @@ else:
         with col3:
             drop_pct = st.number_input("Baisse pour déclencher le levier (%)", value=10.0, step=1.0)
 
+        initial_capital = st.sidebar.number_input("Investissement initial (USD)", value=10000, step=1000)
         target_lev = st.sidebar.slider("Effet de levier cible", 1.1, 5.0, 2.0, 0.1)
 
         if start_date >= end_date:
@@ -65,14 +66,14 @@ else:
                 sim_func = getattr(module, "run_simulation")
                 plot_func = getattr(module, selected_ind["function"])
 
-                history_df, _ = sim_func(start_date, end_date, drop_pct, target_lev)
+                history_df = sim_func(start_date, end_date, initial_capital, drop_pct, target_lev)
                 if history_df is not None:
                     fig = plot_func(history_df)
                     st.plotly_chart(fig, use_container_width=True)
 
-                    final_equity = history_df['Equity'].iloc[-1]
-                    bh_equity = history_df['BuyHold'].iloc[-1]
-                    perf = (final_equity / 10000.0 - 1) * 100
+                    final_equity = history_df['Portfolio_Value'].iloc[-1]
+                    bh_equity = history_df['Buy_Hold'].iloc[-1]
+                    perf = (final_equity / initial_capital - 1) * 100
                     st.write(f"### Résultat de la stratégie :")
                     st.write(f"- Capital Final Stratégie : **{final_equity:,.2f} USD** ({perf:+.2f}%)")
                     st.write(f"- Capital Final Buy & Hold : **{bh_equity:,.2f} USD**")
