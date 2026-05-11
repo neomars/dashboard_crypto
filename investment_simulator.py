@@ -173,6 +173,7 @@ def get_simulator_plot(history_df):
     fig.update_layout(
         title="Simulation d'Investissement BTC - Stratégie de Levier Dynamique",
         xaxis_title="Date",
+        xaxis=dict(range=[history_df['Date'].min(), history_df['Date'].max()]),
         yaxis=dict(title="Valeur du Portefeuille (USD)"),
         yaxis2=dict(title="Prix BTC (USD)", overlaying='y', side='right', showgrid=False),
         template="plotly_dark",

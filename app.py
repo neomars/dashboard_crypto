@@ -47,16 +47,16 @@ else:
     if selected_ind.get("id") == "simulator":
         from investment_simulator import run_simulation
 
-        col1, col2, col3 = st.columns(3)
+        # Interface de saisie principale
+        col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("Date de début", value=datetime(2017, 1, 1))
+            initial_capital = st.number_input("Investissement initial (USD)", value=10000, step=1000)
         with col2:
             end_date = st.date_input("Date de fin", value=datetime.now())
-        with col3:
-            drop_pct = st.number_input("Baisse pour déclencher le levier (%)", value=10.0, step=1.0)
+            target_lev = st.number_input("Effet de levier cible", value=2.0, step=0.1, min_value=1.0)
 
-        initial_capital = st.sidebar.number_input("Investissement initial (USD)", value=10000, step=1000)
-        target_lev = st.sidebar.slider("Effet de levier cible", 1.1, 5.0, 2.0, 0.1)
+        drop_pct = st.slider("Baisse pour déclencher le levier (%)", 1.0, 50.0, 10.0, 0.5)
 
         if start_date >= end_date:
             st.error("La date de début doit être antérieure à la date de fin.")
