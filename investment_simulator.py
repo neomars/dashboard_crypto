@@ -28,10 +28,16 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     waiting_for_recovery = False
 
     # Position tracking
-    # If X1: btc_units = portfolio_value / price
-    # If XL: we have btc_units and debt. Equity = btc_units * price - debt.
+    # Initial purchase is X1
     btc_units = portfolio_value / btc_price_start
     debt = 0.0
+
+    trades = [{
+        'Date': df.index[0],
+        'Action': 'Achat Initial (Mode X1)',
+        'Prix BTC': f'${btc_price_start:,.2f}',
+        'Détails': f'Investissement de ${portfolio_value:,.2f} pour {btc_units:.4f} BTC'
+    }]
 
     # Closing tracking
     closing_start_date = None
@@ -39,7 +45,6 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     weeks_passed = 0
 
     history = []
-    trades = []
 
     # Portfolio ATH for drawdown calculation
     portfolio_ath = portfolio_value
