@@ -41,6 +41,9 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     history = []
     trades = []
 
+    # Portfolio ATH for drawdown calculation
+    portfolio_ath = portfolio_value
+
     for i in range(len(df)):
         current_date = df.index[i]
         current_price = df.iloc[i]['Close']
@@ -139,11 +142,19 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                     if price_drop_from_ath <= -drop_threshold_pct / 100.0:
                         waiting_for_recovery = True
 
+        # Calculate Drawdown
+        if portfolio_value > portfolio_ath:
+            portfolio_ath = portfolio_value
+
+        drawdown = (portfolio_value - portfolio_ath) / portfolio_ath * 100
+
         history.append({
             'Date': current_date,
             'BTC_Price': current_price,
             'Portfolio_Value': portfolio_value,
-            'Mode': current_mode
+            'Mode': current_mode,
+            'BTC_Units': btc_units,
+            'Drawdown': drawdown
         })
 
     history_df = pd.DataFrame(history)
@@ -154,11 +165,15 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
 
     return history_df, trades_df
 
-def get_simulator_plot(history_df):
+def get_simulator_plot(history_df, trades_df):
     if history_df is None or history_df.empty:
         return None
 
-    fig = go.Figure()
+    from plotly.subplots import make_subplots
+
+    # Création d'un graphique avec deux lignes (Capital et Drawdown)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        vertical_spacing=0.05, row_heights=[0.8, 0.2])
 
     # Portfolio Value
     fig.add_trace(go.Scatter(
@@ -166,7 +181,7 @@ def get_simulator_plot(history_df):
         y=history_df['Portfolio_Value'],
         name="Valeur Portefeuille (Stratégie)",
         line=dict(color='#00FFAA', width=2.5)
-    ))
+    ), row=1, col=1)
 
     # Buy & Hold
     fig.add_trace(go.Scatter(
@@ -174,16 +189,26 @@ def get_simulator_plot(history_df):
         y=history_df['Buy_Hold'],
         name="Buy & Hold BTC",
         line=dict(color='rgba(255, 165, 0, 0.6)', width=1.5, dash='dash')
-    ))
+    ), row=1, col=1)
 
-    # BTC Price (Right Axis)
+    # BTC Price (Right Axis - Row 1)
     fig.add_trace(go.Scatter(
         x=history_df['Date'],
         y=history_df['BTC_Price'],
         name="Prix BTC",
-        line=dict(color='rgba(255, 255, 255, 0.2)', width=1),
-        yaxis="y2"
-    ))
+        line=dict(color='rgba(255, 255, 255, 0.1)', width=1),
+        yaxis="y3"
+    ), row=1, col=1)
+
+    # Drawdown (Row 2)
+    fig.add_trace(go.Scatter(
+        x=history_df['Date'],
+        y=history_df['Drawdown'],
+        name="Drawdown (%)",
+        line=dict(color='#FF5555', width=1),
+        fill='tozeroy',
+        fillcolor='rgba(255, 85, 85, 0.2)'
+    ), row=2, col=1)
 
     # Vertical Lines for Halvings
     halvings = [
@@ -197,24 +222,47 @@ def get_simulator_plot(history_df):
         if history_df['Date'].min() <= h <= history_df['Date'].max():
             fig.add_shape(
                 type="line", x0=h, x1=h, y0=0, y1=1,
-                yref="paper", line=dict(color="red", width=1, dash="dot")
+                yref="paper", line=dict(color="rgba(255, 0, 0, 0.3)", width=1, dash="dot")
             )
-            fig.add_annotation(
-                x=h, y=0.02, yref="paper", text="Halving",
-                showarrow=False, font=dict(color="red", size=10),
-                yanchor="bottom"
-            )
+
+    # Points d'entrée et sortie en Levier
+    if not trades_df.empty:
+        entries = trades_df[trades_df['Action'].str.contains('Passage en Levier')]
+        exits = trades_df[trades_df['Action'].str.contains('Fin de phase Levier')]
+
+        # On merge avec history_df pour avoir les valeurs de portefeuille aux dates précises
+        merged_entries = pd.merge(entries, history_df, on='Date')
+        merged_exits = pd.merge(exits, history_df, on='Date')
+
+        fig.add_trace(go.Scatter(
+            x=merged_entries['Date'],
+            y=merged_entries['Portfolio_Value'],
+            mode='markers',
+            name='Entrée Levier',
+            marker=dict(color='lime', size=12, symbol='triangle-up', line=dict(color='white', width=1)),
+            hoverinfo='skip'
+        ), row=1, col=1)
+
+        fig.add_trace(go.Scatter(
+            x=merged_exits['Date'],
+            y=merged_exits['Portfolio_Value'],
+            mode='markers',
+            name='Sortie Levier',
+            marker=dict(color='red', size=10, symbol='circle', line=dict(color='white', width=1)),
+            hoverinfo='skip'
+        ), row=1, col=1)
 
     fig.update_layout(
         title="Simulation d'Investissement BTC - Stratégie de Levier Dynamique",
-        xaxis_title="Date",
+        xaxis2_title="Date",
         xaxis=dict(range=[history_df['Date'].min(), history_df['Date'].max()]),
-        yaxis=dict(title="Valeur du Portefeuille (USD)"),
-        yaxis2=dict(title="Prix BTC (USD)", overlaying='y', side='right', showgrid=False),
+        yaxis=dict(title="Capital (USD)"),
+        yaxis2=dict(title="Drawdown (%)", side="left", showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
+        yaxis3=dict(title="Prix BTC (USD)", overlaying='y', side='right', showgrid=False),
         template="plotly_dark",
-        height=700,
+        height=800,
         hovermode="x unified",
-        legend=dict(x=0.01, y=0.99, bgcolor='rgba(0,0,0,0.5)')
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
 
     return fig

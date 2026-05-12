@@ -68,15 +68,29 @@ else:
 
                 history_df, trades_df = sim_func(start_date, end_date, initial_capital, drop_pct, target_lev)
                 if history_df is not None:
-                    fig = plot_func(history_df)
+                    fig = plot_func(history_df, trades_df)
                     st.plotly_chart(fig, use_container_width=True)
 
                     final_equity = history_df['Portfolio_Value'].iloc[-1]
+                    final_btc = history_df['BTC_Units'].iloc[-1]
+                    initial_btc = initial_capital / history_df['BTC_Price'].iloc[0]
+
                     bh_equity = history_df['Buy_Hold'].iloc[-1]
+                    max_dd = history_df['Drawdown'].min()
+
                     perf = (final_equity / initial_capital - 1) * 100
-                    st.write(f"### Résultat de la stratégie :")
-                    st.write(f"- Capital Final Stratégie : **{final_equity:,.2f} USD** ({perf:+.2f}%)")
-                    st.write(f"- Capital Final Buy & Hold : **{bh_equity:,.2f} USD**")
+                    st.write(f"### 📈 Résultat de la stratégie :")
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.metric("Capital Final (USD)", f"{final_equity:,.2f} $", f"{perf:+.2f} %")
+                        st.write(f"*(Initial: {initial_capital:,.2f} $)*")
+                    with c2:
+                        st.metric("Capital Final (BTC)", f"{final_btc:.4f} BTC")
+                        st.write(f"*(Initial: {initial_btc:.4f} BTC)*")
+                    with c3:
+                        st.metric("Drawdown Max", f"{max_dd:.2f} %", delta_color="inverse")
+
+                    st.write(f"**Comparaison Buy & Hold :** {bh_equity:,.2f} USD")
 
                     if not trades_df.empty:
                         st.write("### 📝 Journal des Opérations")
