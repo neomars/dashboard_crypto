@@ -39,6 +39,7 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     weeks_passed = 0
 
     history = []
+    trades = []
 
     for i in range(len(df)):
         current_date = df.index[i]
@@ -63,12 +64,20 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                 closing_start_date = current_date
                 weeks_passed = 0
 
+                old_units = btc_units
                 # We want total position = portfolio_value * leverage
                 # New btc units = (portfolio_value * leverage) / price
                 new_btc_units = (portfolio_value * target_leverage) / current_price
                 debt = (new_btc_units - btc_units) * current_price
                 btc_units = new_btc_units
                 initial_units_to_close = btc_units # The total amount to de-leverage
+
+                trades.append({
+                    'Date': current_date,
+                    'Action': f'Passage en Levier x{target_leverage:.1f}',
+                    'Prix BTC': f'${current_price:,.2f}',
+                    'Détails': f'Achat de {new_btc_units - old_units:.4f} BTC via dette (${debt:,.2f})'
+                })
 
         elif current_mode == 'XL':
             # Current equity
@@ -88,17 +97,26 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                 btc_units -= units_to_sell
 
                 # Use proceeds to pay debt first, then buy X1 BTC
+                debt_paid = 0
                 if debt > 0:
-                    payment = min(proceeds, debt)
-                    debt -= payment
-                    proceeds -= payment
+                    debt_paid = min(proceeds, debt)
+                    debt -= debt_paid
+                    proceeds -= debt_paid
 
                 # If there's leftover proceeds (profit from that 1/10th), buy X1 BTC
+                added_units = 0
                 if proceeds > 0:
                     added_units = proceeds / current_price
                     btc_units += added_units
 
-                weeks_passed += 1
+                trades.append({
+                    'Date': current_date,
+                    'Action': f'Sortie progressive (Semaine {expected_weeks}/10)',
+                    'Prix BTC': f'${current_price:,.2f}',
+                    'Détails': f'Vente {units_to_sell:.4f} BTC. Dette payée: ${debt_paid:,.2f}. Réinvesti: {added_units:.4f} BTC'
+                })
+
+                weeks_passed = expected_weeks
 
                 # If 10 weeks passed, we are back to full X1 (debt should be 0 or small)
                 if weeks_passed >= 10:
@@ -107,6 +125,13 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                     portfolio_value = (btc_units * current_price) - debt
                     btc_units = portfolio_value / current_price
                     debt = 0.0
+
+                    trades.append({
+                        'Date': current_date,
+                        'Action': 'Fin de phase Levier',
+                        'Prix BTC': f'${current_price:,.2f}',
+                        'Détails': 'Retour au mode X1 (100% investi)'
+                    })
 
                     # Si on est toujours en baisse de X% par rapport à l'ATH, on attend de repasser au dessus
                     # du seuil avant de pouvoir redéclencher (pour "perdre à nouveau X%")
@@ -125,7 +150,9 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     # Buy & Hold for comparison
     history_df['Buy_Hold'] = initial_investment * (history_df['BTC_Price'] / btc_price_start)
 
-    return history_df
+    trades_df = pd.DataFrame(trades)
+
+    return history_df, trades_df
 
 def get_simulator_plot(history_df):
     if history_df is None or history_df.empty:

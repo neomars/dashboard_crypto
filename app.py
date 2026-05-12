@@ -66,7 +66,7 @@ else:
                 sim_func = getattr(module, "run_simulation")
                 plot_func = getattr(module, selected_ind["function"])
 
-                history_df = sim_func(start_date, end_date, initial_capital, drop_pct, target_lev)
+                history_df, trades_df = sim_func(start_date, end_date, initial_capital, drop_pct, target_lev)
                 if history_df is not None:
                     fig = plot_func(history_df)
                     st.plotly_chart(fig, use_container_width=True)
@@ -77,6 +77,13 @@ else:
                     st.write(f"### Résultat de la stratégie :")
                     st.write(f"- Capital Final Stratégie : **{final_equity:,.2f} USD** ({perf:+.2f}%)")
                     st.write(f"- Capital Final Buy & Hold : **{bh_equity:,.2f} USD**")
+
+                    if not trades_df.empty:
+                        st.write("### 📝 Journal des Opérations")
+                        # Formatage date pour affichage
+                        trades_display = trades_df.copy()
+                        trades_display['Date'] = trades_display['Date'].dt.strftime('%Y-%m-%d')
+                        st.dataframe(trades_display, use_container_width=True, hide_index=True)
                 else:
                     st.error("Pas de données disponibles.")
 
