@@ -49,5 +49,13 @@
         "description": "Testez une stratégie de levier dynamique basée sur les baisses de prix.",
         "default_scale": "logarithmique",
         "is_special": true
+    },
+    {
+        "id": "volume",
+        "name": "BTC Price & Volume",
+        "module": "btc_volume",
+        "function": "get_btc_volume_plot",
+        "description": "Analyse du volume de transaction corrélé aux variations de prix journalières.",
+        "default_scale": "linear"
     }
 ]

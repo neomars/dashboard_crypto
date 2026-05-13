@@ -12,6 +12,7 @@ L'application propose une interface de navigation latérale pour choisir parmi l
 4.  **Cycle de 4 ans (Bitcoin)** : Graphique polaire interactif divisé en 4 années (quadrants), permettant de suivre la progression du prix par rapport au dernier halving.
 5.  **SOPR (LTH & STH)** : Analyse de la rentabilité des détenteurs à court (STH) et long terme (LTH) via l'API Dune Analytics.
 6.  **Simulateur d'Investissement** : Simulation d'une stratégie de levier dynamique (x1 -> x2 lors d'une baisse de x%) avec sortie progressive hebdomadaire.
+7.  **BTC Price & Volume** : Graphique en chandeliers japonais (candlestick) avec volume coloré (vert pour les hausses, rouge pour les baisses).
 
 ## Installation
 
@@ -59,3 +60,4 @@ L'interface s'ouvrira automatiquement dans votre navigateur par défaut (génér
 - `cycle_indicator.py` : Graphique polaire du cycle de 4 ans (Plotly).
 - `sth_sopr.py` : Récupération et visualisation des données SOPR via Dune.
 - `investment_simulator.py` : Logique et graphique du simulateur d'investissement.
+- `btc_volume.py` : Indicateur de prix et volume coloré.
