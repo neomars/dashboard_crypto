@@ -64,8 +64,10 @@ def get_btc_halving_plot():
             top_row = period_data_top.loc[period_data_top['close'].idxmax()]
             tops.append(top_row)
 
-        # Pour le bottom, on garde tout l'intervalle entre les deux halvings
-        period_data_bottom = btc[(btc['timestamp'] >= start_date) & (btc['timestamp'] < next_halving_date)]
+        # Pour le bottom, on commence à "précédent halving + 600 jours" jusqu'au prochain halving
+        bottom_start_limit = start_date + timedelta(days=600)
+
+        period_data_bottom = btc[(btc['timestamp'] >= bottom_start_limit) & (btc['timestamp'] < next_halving_date)]
         if not period_data_bottom.empty:
             bottom_row = period_data_bottom.loc[period_data_bottom['close'].idxmin()]
             bottoms.append(bottom_row)
