@@ -54,14 +54,20 @@ def get_btc_halving_plot():
     bottoms = []
     for i in range(len(all_halvings) - 1):
         start_date = all_halvings[i]
-        end_date = all_halvings[i+1]
+        next_halving_date = all_halvings[i+1]
 
-        period_data = btc[(btc['timestamp'] >= start_date) & (btc['timestamp'] < end_date)]
-        if not period_data.empty:
-            top_row = period_data.loc[period_data['close'].idxmax()]
+        # Limiter la recherche du Top à "prochain halving - 150 jours" pour éviter les sommets de fin de cycle
+        top_end_limit = next_halving_date - timedelta(days=150)
+
+        period_data_top = btc[(btc['timestamp'] >= start_date) & (btc['timestamp'] < top_end_limit)]
+        if not period_data_top.empty:
+            top_row = period_data_top.loc[period_data_top['close'].idxmax()]
             tops.append(top_row)
 
-            bottom_row = period_data.loc[period_data['close'].idxmin()]
+        # Pour le bottom, on garde tout l'intervalle entre les deux halvings
+        period_data_bottom = btc[(btc['timestamp'] >= start_date) & (btc['timestamp'] < next_halving_date)]
+        if not period_data_bottom.empty:
+            bottom_row = period_data_bottom.loc[period_data_bottom['close'].idxmin()]
             bottoms.append(bottom_row)
 
     # ====================== Graphique ======================

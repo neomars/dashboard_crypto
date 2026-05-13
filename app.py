@@ -11,37 +11,71 @@ def load_indicators():
 INDICATORS = load_indicators()
 
 st.set_page_config(page_title="Crypto & Finance Dashboard", layout="wide")
+
+# Initialisation de l'état de navigation
+if 'selection' not in st.session_state:
+    st.session_state.selection = "Accueil"
+
 st.title("📊 Tableau de Bord d'Indicateurs Financiers")
 
-# --- Navigation ---
-st.sidebar.title("Navigation")
-menu_options = ["Accueil"] + [ind["name"] for ind in INDICATORS]
-selection = st.sidebar.selectbox("Choisissez un indicateur", menu_options)
+# --- Navigation latérale avec boutons ---
+st.sidebar.title("🚀 Navigation")
 
-# --- Configuration de l'échelle ---
-selected_ind = next((ind for ind in INDICATORS if ind["name"] == selection), None)
+# Bouton Accueil
+if st.sidebar.button("🏠 Accueil", use_container_width=True):
+    st.session_state.selection = "Accueil"
 
-default_scale_idx = 0
-if selected_ind and selected_ind.get("default_scale") == "logarithmique":
-    default_scale_idx = 1
+st.sidebar.markdown("---")
 
-scale_type = st.sidebar.radio(
-    "Type d'échelle (Axe Y)",
-    ["Linéaire", "Logarithmique"],
-    index=default_scale_idx
-)
-yaxis_type = "log" if scale_type == "Logarithmique" else "linear"
+# Section Simulation
+simulator = next((ind for ind in INDICATORS if ind.get("is_special")), None)
+if simulator:
+    st.sidebar.subheader("Simulation")
+    if st.sidebar.button(f"{simulator['icon']} {simulator['name']}", use_container_width=True):
+        st.session_state.selection = simulator['name']
+    st.sidebar.markdown("---")
+
+# Section Indicateurs
+st.sidebar.subheader("Indicateurs")
+other_indicators = [ind for ind in INDICATORS if not ind.get("is_special")]
+for ind in other_indicators:
+    if st.sidebar.button(f"{ind['icon']} {ind['name']}", use_container_width=True):
+        st.session_state.selection = ind['name']
+
+# --- Configuration de l'échelle (pour les graphiques compatibles) ---
+selected_ind = next((ind for ind in INDICATORS if ind["name"] == st.session_state.selection), None)
+
+if selected_ind:
+    st.sidebar.markdown("---")
+    default_scale_idx = 1 if selected_ind.get("default_scale") == "logarithmique" else 0
+    scale_type = st.sidebar.radio(
+        "Type d'échelle (Axe Y)",
+        ["Linéaire", "Logarithmique"],
+        index=default_scale_idx
+    )
+    yaxis_type = "log" if scale_type == "Logarithmique" else "linear"
 
 # --- Contenu Principal ---
+selection = st.session_state.selection
+
 if selection == "Accueil":
     st.write("## Bienvenue sur votre interface d'analyse financière.")
     st.write("Cette application permet de visualiser différents indicateurs sur les marchés crypto et financiers.")
-    st.write("### Indicateurs disponibles :")
-    for ind in INDICATORS:
+    st.write("### Explorez nos outils via la barre latérale :")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if simulator:
+            st.info(f"**{simulator['name']}** : {simulator['description']}")
+    with col2:
+        for ind in other_indicators[:3]:
+            st.write(f"- **{ind['name']}** : {ind['description']}")
+
+    for ind in other_indicators[3:]:
         st.write(f"- **{ind['name']}** : {ind['description']}")
 
 else:
-    st.write(f"## {selected_ind['name']}")
+    st.write(f"## {selected_ind['icon']} {selected_ind['name']}")
 
     # Cas particulier : Simulateur d'Investissement
     if selected_ind.get("id") == "simulator":
@@ -94,7 +128,6 @@ else:
 
                     if not trades_df.empty:
                         st.write("### 📝 Journal des Opérations")
-                        # Formatage date pour affichage
                         trades_display = trades_df.copy()
                         trades_display['Date'] = trades_display['Date'].dt.strftime('%Y-%m-%d')
                         st.dataframe(trades_display, use_container_width=True, hide_index=True)
