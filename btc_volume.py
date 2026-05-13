@@ -10,8 +10,8 @@ warnings.filterwarnings("ignore")
 @st.cache_data(ttl=3600)
 def get_btc_volume_plot():
     # ====================== Téléchargement des données ======================
-    # Utilisation d'une période par défaut large pour le dashboard
-    btc = yf.download('BTC-USD', start='2020-01-01', interval="1d", progress=False)
+    # Utilisation de l'historique complet disponible
+    btc = yf.download('BTC-USD', period="max", interval="1d", progress=False)
 
     if btc.empty:
         return None
