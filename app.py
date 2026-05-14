@@ -126,6 +126,10 @@ else:
 
                     st.write(f"**Comparaison Buy & Hold :** {bh_equity:,.2f} USD")
 
+                    # Alerte de liquidation
+                    if not trades_df.empty and any(trades_df['Action'].str.contains('LIQUIDATION')):
+                        st.error("💀 **ALERTE : Votre stratégie a été liquidée !** Le capital est tombé à zéro suite aux pertes sous levier.")
+
                     if not trades_df.empty:
                         st.write("### 📝 Journal des Opérations")
                         trades_display = trades_df.copy()

@@ -58,8 +58,9 @@ def get_cycle_plot():
 
     # Add background sectors for years
     # Q1: 0-90, Q2: 90-180, Q3: 180-270, Q4: 270-360
-    colors = ['rgba(144, 238, 144, 0.05)', 'rgba(255, 255, 224, 0.05)',
-              'rgba(255, 182, 193, 0.05)', 'rgba(173, 216, 230, 0.05)']
+    # Adjusted colors for dark background
+    colors = ['rgba(0, 255, 0, 0.03)', 'rgba(255, 255, 0, 0.03)',
+              'rgba(255, 0, 0, 0.03)', 'rgba(0, 255, 255, 0.03)']
 
     for i in range(4):
         start_angle = i * 90
@@ -92,7 +93,7 @@ def get_cycle_plot():
             theta=[0],
             mode='text',
             text=[f"${p:,}"],
-            textfont=dict(size=10, color="gray"),
+            textfont=dict(size=10, color="#888888"),
             hoverinfo='none',
             showlegend=False
         ))
@@ -136,7 +137,7 @@ def get_cycle_plot():
             r=[0, 11],
             theta=[angle, angle],
             mode='lines',
-            line=dict(color='rgba(0,100,0,0.2)', width=1.5),
+            line=dict(color='rgba(255,255,255,0.15)', width=1.5),
             hoverinfo='none',
             showlegend=False
         ))
@@ -146,7 +147,7 @@ def get_cycle_plot():
             theta=[angle],
             mode='text',
             text=[label],
-            textfont=dict(size=11, color="darkgreen", family="serif"),
+            textfont=dict(size=11, color="#00FFAA", family="serif"),
             hoverinfo='none',
             showlegend=False
         ))
@@ -164,7 +165,7 @@ def get_cycle_plot():
         theta=[p[1] for p in phases],
         mode='text',
         text=[p[0] for p in phases],
-        textfont=dict(size=9, color="black", family="serif"),
+        textfont=dict(size=9, color="#AAAAAA", family="serif"),
         hoverinfo='none',
         showlegend=False
     ))
@@ -175,14 +176,15 @@ def get_cycle_plot():
         theta=[45, 135, 225, 315],
         mode='text',
         text=["ANNÉE 1", "ANNÉE 2", "ANNÉE 3", "ANNÉE 4"],
-        textfont=dict(size=24, color="rgba(0,0,0,0.07)", family="serif"),
+        textfont=dict(size=24, color="rgba(255,255,255,0.05)", family="serif"),
         hoverinfo='none',
         showlegend=False
     ))
 
     fig.update_layout(
+        template="plotly_dark",
         polar=dict(
-            bgcolor='#F5F5DC',
+            bgcolor='black',
             angularaxis=dict(
                 direction='clockwise',
                 period=360,
@@ -195,7 +197,7 @@ def get_cycle_plot():
             )
         ),
         showlegend=False,
-        paper_bgcolor='#F5F5DC',
+        paper_bgcolor='black',
         margin=dict(l=40, r=40, t=80, b=40),
         height=900,
         width=900,
@@ -203,7 +205,7 @@ def get_cycle_plot():
             text="BITCOIN 4-YEAR CYCLE - Hodler's Cheat Sheet",
             x=0.5,
             y=0.98,
-            font=dict(size=24, family="serif", color="darkgreen")
+            font=dict(size=24, family="serif", color="#00FFAA")
         )
     )
 

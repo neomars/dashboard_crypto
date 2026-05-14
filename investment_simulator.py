@@ -45,6 +45,7 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     weeks_passed = 0
 
     history = []
+    liquidation_event = None
 
     # Portfolio ATH for drawdown calculation
     portfolio_ath = portfolio_value
@@ -146,6 +147,22 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                     price_drop_from_ath = (current_price - all_time_high) / all_time_high
                     if price_drop_from_ath <= -drop_threshold_pct / 100.0:
                         waiting_for_recovery = True
+
+        # Check for liquidation
+        if portfolio_value <= 0 and liquidation_event is None:
+            liquidation_event = {
+                'Date': current_date,
+                'Portfolio_Value': 0
+            }
+            trades.append({
+                'Date': current_date,
+                'Action': '💀 LIQUIDATION 💀',
+                'Prix BTC': f'${current_price:,.2f}',
+                'Détails': 'Le capital net est tombé à zéro.'
+            })
+            portfolio_value = 0
+            btc_units = 0
+            debt = 0
 
         # Calculate Drawdown
         if portfolio_value > portfolio_ath:
@@ -254,6 +271,21 @@ def get_simulator_plot(history_df, trades_df):
             mode='markers',
             name='Sortie Levier',
             marker=dict(color='red', size=10, symbol='circle', line=dict(color='white', width=1)),
+            hoverinfo='skip'
+        ), row=1, col=1)
+
+    # Marquage des liquidations
+    liquidations = trades_df[trades_df['Action'].str.contains('LIQUIDATION')]
+    if not liquidations.empty:
+        merged_liq = pd.merge(liquidations, history_df, on='Date')
+        fig.add_trace(go.Scatter(
+            x=merged_liq['Date'],
+            y=merged_liq['Portfolio_Value'],
+            mode='markers+text',
+            name='Liquidation',
+            text='💀',
+            textposition='top center',
+            marker=dict(color='orange', size=15, symbol='x'),
             hoverinfo='skip'
         ), row=1, col=1)
 
