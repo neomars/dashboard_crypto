@@ -4,7 +4,7 @@ import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
-def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct, target_leverage=2.0):
+def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct, target_leverage=2.0, exit_frequency='Hebdomadaire', exit_pct=10.0):
     # 1. Download Data (with some buffer to detect peak before start if needed, but here we start at x1)
     df = yf.download('BTC-USD', start=start_date, end=end_date, interval='1d', progress=False)
     if df.empty:
@@ -42,7 +42,15 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     # Closing tracking
     closing_start_date = None
     initial_units_to_close = 0
-    weeks_passed = 0
+    steps_passed = 0
+
+    freq_map = {
+        'Journalière': 1,
+        'Hebdomadaire': 7,
+        'Mensuelle': 30
+    }
+    days_per_step = freq_map.get(exit_frequency, 7)
+    total_steps = int(100 / exit_pct)
 
     history = []
     liquidation_event = None
@@ -71,7 +79,7 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                 # SWITCH TO XL
                 current_mode = 'XL'
                 closing_start_date = current_date
-                weeks_passed = 0
+                steps_passed = 0
 
                 old_units = btc_units
                 # We want total position = portfolio_value * leverage
@@ -92,13 +100,13 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
             # Current equity
             portfolio_value = (btc_units * current_price) - debt
 
-            # Weekly check
+            # Progressive exit check
             days_since_switch = (current_date - closing_start_date).days
-            expected_weeks = days_since_switch // 7
+            expected_steps = days_since_switch // days_per_step
 
-            if expected_weeks > weeks_passed:
-                # Sell 1/10th of initial XL units
-                units_to_sell = initial_units_to_close / 10.0
+            if expected_steps > steps_passed:
+                # Sell a fraction of initial XL units
+                units_to_sell = initial_units_to_close * (exit_pct / 100.0)
                 # If we have less than that (rounding), sell all
                 units_to_sell = min(units_to_sell, btc_units)
 
@@ -112,7 +120,7 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                     debt -= debt_paid
                     proceeds -= debt_paid
 
-                # If there's leftover proceeds (profit from that 1/10th), buy X1 BTC
+                # If there's leftover proceeds (profit from that fraction), buy X1 BTC
                 added_units = 0
                 if proceeds > 0:
                     added_units = proceeds / current_price
@@ -120,15 +128,15 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
 
                 trades.append({
                     'Date': current_date,
-                    'Action': f'Sortie progressive (Semaine {expected_weeks}/10)',
+                    'Action': f'Sortie progressive ({exit_frequency} {expected_steps}/{total_steps})',
                     'Prix BTC': f'${current_price:,.2f}',
                     'Détails': f'Vente {units_to_sell:.4f} BTC. Dette payée: ${debt_paid:,.2f}. Réinvesti: {added_units:.4f} BTC'
                 })
 
-                weeks_passed = expected_weeks
+                steps_passed = expected_steps
 
-                # If 10 weeks passed, we are back to full X1 (debt should be 0 or small)
-                if weeks_passed >= 10:
+                # If all steps passed, we are back to full X1 (debt should be 0 or small)
+                if steps_passed >= total_steps:
                     current_mode = 'X1'
                     # On revient en X1. On active l'attente de récupération si on est toujours sous le seuil de drop
                     portfolio_value = (btc_units * current_price) - debt

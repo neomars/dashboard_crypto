@@ -90,7 +90,13 @@ else:
             end_date = st.date_input("Date de fin", value=datetime.now())
             target_lev = st.number_input("Effet de levier cible", value=2.0, step=0.1, min_value=1.0)
 
-        drop_pct = st.slider("Baisse pour déclencher le levier (%)", 1.0, 50.0, 10.0, 0.5)
+        col3, col4, col5 = st.columns(3)
+        with col3:
+            drop_pct = st.slider("Baisse déclencheur (%)", 1.0, 50.0, 10.0, 0.5)
+        with col4:
+            exit_freq = st.selectbox("Fréquence de sortie", ["Journalière", "Hebdomadaire", "Mensuelle"], index=1)
+        with col5:
+            exit_pct = st.number_input("Sortie par étape (%)", value=10.0, step=1.0, min_value=1.0, max_value=100.0)
 
         if start_date >= end_date:
             st.error("La date de début doit être antérieure à la date de fin.")
@@ -100,7 +106,10 @@ else:
                 sim_func = getattr(module, "run_simulation")
                 plot_func = getattr(module, selected_ind["function"])
 
-                history_df, trades_df = sim_func(start_date, end_date, initial_capital, drop_pct, target_lev)
+                history_df, trades_df = sim_func(
+                    start_date, end_date, initial_capital, drop_pct, target_lev,
+                    exit_frequency=exit_freq, exit_pct=exit_pct
+                )
                 if history_df is not None:
                     fig = plot_func(history_df, trades_df)
                     st.plotly_chart(fig, use_container_width=True)
