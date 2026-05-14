@@ -64,5 +64,15 @@
         "function": "get_btc_volume_plot",
         "description": "Analyse du volume de transaction corrélé aux variations de prix journalières.",
         "default_scale": "linear"
+    },
+    {
+        "id": "vcr",
+        "name": "Volatility Compression Ratio (VCR)",
+        "icon": "📉",
+        "module": "vcr_indicator",
+        "function": "get_vcr_plot",
+        "description": "Mesure de la compression de volatilité pour anticiper les mouvements explosifs.",
+        "default_scale": "linear",
+        "interpretation": "VCR bas (< 0.6) = Forte compression. Anticipation d'un mouvement majeur (hausse ou baisse)."
     }
 ]
