@@ -5,3 +5,5 @@ requests
 plotly
 matplotlib
 numpy
+fpdf2
+configparser

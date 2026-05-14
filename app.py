@@ -79,16 +79,19 @@ else:
 
     # Cas particulier : Simulateur d'Investissement
     if selected_ind.get("id") == "simulator":
-        from investment_simulator import run_simulation
+        from investment_simulator import run_simulation, generate_pdf_report
 
         # Interface de saisie principale
-        col1, col2 = st.columns(2)
+        col1, col2, col_extra = st.columns([1, 1, 1])
         with col1:
             start_date = st.date_input("Date de début", value=datetime(2017, 1, 1))
             initial_capital = st.number_input("Investissement initial (USD)", value=10000.0, step=100.0)
         with col2:
             end_date = st.date_input("Date de fin", value=datetime.now())
             target_lev = st.number_input("Effet de levier cible", value=2.0, step=0.1, min_value=1.0)
+        with col_extra:
+            ticker = st.text_input("Ticker Yahoo Finance", value="BTC-USD")
+            st.info("Exemples: BTC-USD, ETH-USD, SOL-USD, AAPL, GC=F")
 
         col3, col4, col5 = st.columns(3)
         with col3:
@@ -108,7 +111,7 @@ else:
 
                 history_df, trades_df = sim_func(
                     start_date, end_date, initial_capital, drop_pct, target_lev,
-                    exit_frequency=exit_freq, exit_pct=exit_pct
+                    exit_frequency=exit_freq, exit_pct=exit_pct, ticker=ticker
                 )
                 if history_df is not None:
                     fig = plot_func(history_df, trades_df)
@@ -142,8 +145,39 @@ else:
                     if not trades_df.empty:
                         st.write("### 📝 Journal des Opérations")
                         trades_display = trades_df.copy()
-                        trades_display['Date'] = trades_display['Date'].dt.strftime('%Y-%m-%d')
+                        if 'Date' in trades_display.columns:
+                            trades_display['Date'] = trades_display['Date'].dt.strftime('%Y-%m-%d')
                         st.dataframe(trades_display, use_container_width=True, hide_index=True)
+
+                    # Export Section
+                    st.write("### 📥 Exporter les résultats")
+                    exp1, exp2 = st.columns(2)
+                    with exp1:
+                        csv = history_df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="Télécharger CSV (Historique)",
+                            data=csv,
+                            file_name=f"simulation_{ticker}_{datetime.now().strftime('%Y%m%d')}.csv",
+                            mime='text/csv',
+                        )
+                    with exp2:
+                        params = {
+                            "Ticker": ticker,
+                            "Date de début": start_date,
+                            "Date de fin": end_date,
+                            "Capital Initial": initial_capital,
+                            "Levier Cible": target_lev,
+                            "Baisse Déclencheur": f"{drop_pct}%",
+                            "Fréquence Sortie": exit_freq,
+                            "Sortie par étape": f"{exit_pct}%"
+                        }
+                        pdf_data = generate_pdf_report(history_df, trades_df, params)
+                        st.download_button(
+                            label="Télécharger Rapport PDF",
+                            data=pdf_data,
+                            file_name=f"rapport_simulation_{ticker}.pdf",
+                            mime='application/pdf',
+                        )
                 else:
                     st.error("Pas de données disponibles.")
 

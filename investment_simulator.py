@@ -4,14 +4,14 @@ import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
-def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct, target_leverage=2.0, exit_frequency='Hebdomadaire', exit_pct=10.0):
+def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct, target_leverage=2.0, exit_frequency='Hebdomadaire', exit_pct=10.0, ticker='BTC-USD'):
     # 1. Download Data (with some buffer to detect peak before start if needed, but here we start at x1)
-    df = yf.download('BTC-USD', start=start_date, end=end_date, interval='1d', progress=False)
+    df = yf.download(ticker, start=start_date, end=end_date, interval='1d', progress=False)
     if df.empty:
         return None
 
     if isinstance(df.columns, pd.MultiIndex):
-        df = pd.DataFrame({'Close': df['Close']['BTC-USD']})
+        df = pd.DataFrame({'Close': df['Close'][ticker]})
     else:
         df = df[['Close']]
 
@@ -35,8 +35,8 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     trades = [{
         'Date': df.index[0],
         'Action': 'Achat Initial (Mode X1)',
-        'Prix BTC': f'${btc_price_start:,.2f}',
-        'Détails': f'Investissement de ${portfolio_value:,.2f} pour {btc_units:.4f} BTC'
+        'Prix': f'${btc_price_start:,.2f}',
+        'Détails': f'Investissement de ${portfolio_value:,.2f} pour {btc_units:.4f} {ticker.split("-")[0]}'
     }]
 
     # Closing tracking
@@ -92,8 +92,8 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                 trades.append({
                     'Date': current_date,
                     'Action': f'Passage en Levier x{target_leverage:.1f}',
-                    'Prix BTC': f'${current_price:,.2f}',
-                    'Détails': f'Achat de {new_btc_units - old_units:.4f} BTC via dette (${debt:,.2f})'
+                    'Prix': f'${current_price:,.2f}',
+                    'Détails': f'Achat de {new_btc_units - old_units:.4f} {ticker.split("-")[0]} via dette (${debt:,.2f})'
                 })
 
         elif current_mode == 'XL':
@@ -129,8 +129,8 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                 trades.append({
                     'Date': current_date,
                     'Action': f'Sortie progressive ({exit_frequency} {expected_steps}/{total_steps})',
-                    'Prix BTC': f'${current_price:,.2f}',
-                    'Détails': f'Vente {units_to_sell:.4f} BTC. Dette payée: ${debt_paid:,.2f}. Réinvesti: {added_units:.4f} BTC'
+                    'Prix': f'${current_price:,.2f}',
+                    'Détails': f'Vente {units_to_sell:.4f} {ticker.split("-")[0]}. Dette payée: ${debt_paid:,.2f}. Réinvesti: {added_units:.4f} {ticker.split("-")[0]}'
                 })
 
                 steps_passed = expected_steps
@@ -146,8 +146,8 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                     trades.append({
                         'Date': current_date,
                         'Action': 'Fin de phase Levier',
-                        'Prix BTC': f'${current_price:,.2f}',
-                        'Détails': 'Retour au mode X1 (100% investi)'
+                        'Prix': f'${current_price:,.2f}',
+                        'Détails': f'Retour au mode X1 (100% investi en {ticker.split("-")[0]})'
                     })
 
                     # Si on est toujours en baisse de X% par rapport à l'ATH, on attend de repasser au dessus
@@ -165,7 +165,7 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
             trades.append({
                 'Date': current_date,
                 'Action': '💀 LIQUIDATION 💀',
-                'Prix BTC': f'${current_price:,.2f}',
+                'Prix': f'${current_price:,.2f}',
                 'Détails': 'Le capital net est tombé à zéro.'
             })
             portfolio_value = 0
@@ -194,6 +194,64 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     trades_df = pd.DataFrame(trades)
 
     return history_df, trades_df
+
+from fpdf import FPDF
+import io
+
+def generate_pdf_report(history_df, trades_df, params):
+    pdf = FPDF()
+    pdf.add_page()
+
+    # Title
+    pdf.set_font("helvetica", 'B', 16)
+    pdf.cell(0, 10, "Rapport de Simulation d'Investissement", ln=True, align='C')
+    pdf.ln(10)
+
+    # Parameters
+    pdf.set_font("helvetica", 'B', 12)
+    pdf.cell(0, 10, "Parametres de Simulation", ln=True)
+    pdf.set_font("helvetica", '', 10)
+    for k, v in params.items():
+        pdf.cell(0, 7, f"{k}: {v}", ln=True)
+    pdf.ln(5)
+
+    # Summary Results
+    initial_cap = params.get('Capital Initial', 10000)
+    final_equity = history_df['Portfolio_Value'].iloc[-1]
+    perf = (final_equity / initial_cap - 1) * 100
+    bh_equity = history_df['Buy_Hold'].iloc[-1]
+    bh_perf = (bh_equity / initial_cap - 1) * 100
+    max_dd = history_df['Drawdown'].min()
+
+    pdf.set_font("helvetica", 'B', 12)
+    pdf.cell(0, 10, "Resultats", ln=True)
+    pdf.set_font("helvetica", '', 10)
+    pdf.cell(0, 7, f"Capital Final: ${final_equity:,.2f} ({perf:+.2f}%)", ln=True)
+    pdf.cell(0, 7, f"Buy & Hold: ${bh_equity:,.2f} ({bh_perf:+.2f}%)", ln=True)
+    pdf.cell(0, 7, f"Drawdown Max: {max_dd:.2f}%", ln=True)
+    pdf.ln(10)
+
+    # Trades Table Header
+    pdf.set_font("helvetica", 'B', 10)
+    pdf.cell(30, 10, "Date", 1)
+    pdf.cell(60, 10, "Action", 1)
+    pdf.cell(100, 10, "Details", 1)
+    pdf.ln()
+
+    # Trades Table Rows
+    pdf.set_font("helvetica", '', 8)
+    if not trades_df.empty:
+        for _, row in trades_df.tail(20).iterrows(): # Show last 20 trades
+            date_str = row['Date'].strftime('%Y-%m-%d') if hasattr(row['Date'], 'strftime') else str(row['Date'])
+            action = str(row['Action'])[:35]
+            details = str(row['Détails'])[:65]
+
+            pdf.cell(30, 8, date_str, 1)
+            pdf.cell(60, 8, action, 1)
+            pdf.cell(100, 8, details, 1)
+            pdf.ln()
+
+    return bytes(pdf.output())
 
 def get_simulator_plot(history_df, trades_df):
     if history_df is None or history_df.empty:
