@@ -42,7 +42,9 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     # Closing tracking
     closing_start_date = None
     initial_units_to_close = 0
+    purchase_price_xl = 0.0
     steps_passed = 0
+    last_logged_skip_step = -1
 
     freq_map = {
         'Journalière': 1,
@@ -88,6 +90,7 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
                 debt = (new_btc_units - btc_units) * current_price
                 btc_units = new_btc_units
                 initial_units_to_close = btc_units # The total amount to de-leverage
+                purchase_price_xl = current_price
 
                 trades.append({
                     'Date': current_date,
@@ -105,35 +108,55 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
             expected_steps = days_since_switch // days_per_step
 
             if expected_steps > steps_passed:
-                # Sell a fraction of initial XL units
-                units_to_sell = initial_units_to_close * (exit_pct / 100.0)
-                # If we have less than that (rounding), sell all
-                units_to_sell = min(units_to_sell, btc_units)
+                # Rule: Only sell if current price >= purchase price
+                if current_price >= purchase_price_xl:
+                    # Catch up: Sell all pending fractions
+                    num_pending_steps = expected_steps - steps_passed
+                    # Don't sell more than what's remaining to reach total_steps
+                    num_pending_steps = min(num_pending_steps, total_steps - steps_passed)
 
-                proceeds = units_to_sell * current_price
-                btc_units -= units_to_sell
+                    units_to_sell = initial_units_to_close * (exit_pct / 100.0) * num_pending_steps
 
-                # Use proceeds to pay debt first, then buy X1 BTC
-                debt_paid = 0
-                if debt > 0:
-                    debt_paid = min(proceeds, debt)
-                    debt -= debt_paid
-                    proceeds -= debt_paid
+                    # If we have less than that (rounding), sell all
+                    units_to_sell = min(units_to_sell, btc_units)
 
-                # If there's leftover proceeds (profit from that fraction), buy X1 BTC
-                added_units = 0
-                if proceeds > 0:
-                    added_units = proceeds / current_price
-                    btc_units += added_units
+                    proceeds = units_to_sell * current_price
+                    btc_units -= units_to_sell
 
-                trades.append({
-                    'Date': current_date,
-                    'Action': f'Sortie progressive ({exit_frequency} {expected_steps}/{total_steps})',
-                    'Prix': f'${current_price:,.2f}',
-                    'Détails': f'Vente {units_to_sell:.4f} {ticker.split("-")[0]}. Dette payée: ${debt_paid:,.2f}. Réinvesti: {added_units:.4f} {ticker.split("-")[0]}'
-                })
+                    # Use proceeds to pay debt first, then buy X1 BTC
+                    debt_paid = 0
+                    if debt > 0:
+                        debt_paid = min(proceeds, debt)
+                        debt -= debt_paid
+                        proceeds -= debt_paid
 
-                steps_passed = expected_steps
+                    # If there's leftover proceeds (profit from that fraction), buy X1 BTC
+                    added_units = 0
+                    if proceeds > 0:
+                        added_units = proceeds / current_price
+                        btc_units += added_units
+
+                    trades.append({
+                        'Date': current_date,
+                        'Action': f'Sortie progressive ({exit_frequency} {expected_steps}/{total_steps})',
+                        'Prix': f'${current_price:,.2f}',
+                        'Détails': f'Vente rattrapée ({num_pending_steps} étape(s)) : {units_to_sell:.4f} {ticker.split("-")[0]}. Dette payée: ${debt_paid:,.2f}.'
+                    })
+
+                    steps_passed = expected_steps
+                else:
+                    # POSTPONE sale logic
+                    # To avoid log spamming, only log once per expected step
+                    if expected_steps > last_logged_skip_step:
+                        trades.append({
+                            'Date': current_date,
+                            'Action': '⚠️ Vente reportée',
+                            'Prix': f'${current_price:,.2f}',
+                            'Détails': f'Prix actuel (${current_price:,.2f}) < Prix achat (${purchase_price_xl:,.2f}). Report au mois suivant.'
+                        })
+                        last_logged_skip_step = expected_steps
+                    # Note: We do NOT increment steps_passed here, so we will keep trying
+                    # until current_price >= purchase_price_xl.
 
                 # If all steps passed, we are back to full X1 (debt should be 0 or small)
                 if steps_passed >= total_steps:

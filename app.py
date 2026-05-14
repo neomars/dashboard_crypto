@@ -75,7 +75,10 @@ if selection == "Accueil":
         st.write(f"- **{ind['name']}** : {ind['description']}")
 
 else:
-    st.write(f"## {selected_ind['icon']} {selected_ind['name']}")
+    header_text = f"## {selected_ind['icon']} {selected_ind['name']}"
+    if selected_ind.get("id") == "simulator":
+        header_text += " *(Btc est la valeur par défaut, aucune position en stable coin)*"
+    st.write(header_text)
 
     # Cas particulier : Simulateur d'Investissement
     if selected_ind.get("id") == "simulator":
