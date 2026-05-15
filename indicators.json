@@ -77,12 +77,12 @@
     },
     {
         "id": "bmi",
-        "name": "Bitcoin Maturation Index (BMI)",
+        "name": "Bitcoin Correction Analysis",
         "icon": "💎",
         "module": "bmi_indicator",
         "function": "get_bmi_plot",
-        "description": "Mesure la maturation du marché Bitcoin à travers la réduction de la sévérité des corrections.",
+        "description": "Analyse comparative de la sévérité des corrections par cycle de halving (2010-2025).",
         "default_scale": "logarithmique",
-        "interpretation": "BMI décroissant = Marché plus mature. BMI bas (0.3-0.6) = Normalisation."
+        "interpretation": "Compare la moyenne et le maximum des corrections (>15%) entre les différents cycles."
     }
 ]

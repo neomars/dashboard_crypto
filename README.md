@@ -14,8 +14,7 @@ L'application propose une interface de navigation latérale pour choisir parmi l
 6.  **Simulateur d'Investissement** : Simulation d'une stratégie de levier dynamique (x1 -> x2 lors d'une baisse de x%) avec sortie progressive personnalisable (journalière, hebdomadaire ou mensuelle).
 7.  **BTC Price & Volume** : Graphique en chandeliers japonais (candlestick) avec volume coloré (vert pour les hausses, rouge pour les baisses).
 8.  **Volatility Compression Ratio (VCR)** : Mesure de la compression de volatilité (ratio 30j/365j) pour anticiper les mouvements explosifs.
-9.  **Bitcoin Maturation Index (BMI)** : Mesure la maturation du marché en comparant la sévérité des corrections récentes à la moyenne historique.
-    *   **Formule** : $BMI_t = \frac{\text{Moyenne des 5 plus grosses corrections (> 15\%) des 24 derniers mois}}{\text{Moyenne historique des 5 plus grosses corrections (> 15\%) sur tout l'historique}}$
+9.  **Analyse des Corrections (BMI)** : Analyse comparative de la sévérité des corrections (>15%) pour chaque cycle de halving depuis 2010. Identifie les sommets (Tops) et les creux (Bottoms) historiques.
 
 ## Installation
 
