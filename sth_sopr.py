@@ -105,7 +105,7 @@ def get_sth_sopr_plot():
 
     # BTC Price
     fig.add_trace(go.Scatter(
-        x=df['time'],
+        x=df[time_col],
         y=df['BTC_Price'],
         mode='lines',
         name='Prix BTC',

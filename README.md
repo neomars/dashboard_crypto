@@ -35,13 +35,23 @@ $$\frac{P_i}{\text{peak}_i} - 1 \leq -0.15 \quad \text{(soit une baisse d'au moi
 On enregistre alors la valeur de la correction :
 $$\text{drop}_i = \left( \frac{P_i}{\text{peak}_i} - 1 \right) \times 100$$
 
-#### 3. Calcul des métriques par cycle
-Pour chaque cycle, on obtient une liste de corrections $\{\text{drop}_1, \text{drop}_2, \dots, \text{drop}_n\}$.
+### 3. Calcul des métriques par cycle
+
+Pour chaque cycle, on obtient une liste de corrections $\{drop_1, drop_2, \dots, drop_n\}$.
+
 On calcule alors :
-*   **Moyenne des corrections** :
-    $$\text{avg\_correction} = \frac{1}{n} \sum_{k=1}^{n} |\text{drop}_k|$$
-*   **Correction la plus forte** (la plus sévère) :
-    $$\text{max\_correction} = \max_k (|\text{drop}_k|)$$
+
+**Moyenne des corrections :**
+
+$$
+\text{avg_correction} = \frac{1}{n} \sum_{k=1}^{n} |drop_k|
+$$
+
+**Correction la plus forte :**
+
+$$
+\text{max_correction} = \max_k (|drop_k|)
+$$
 
 #### 4. Interprétation
 Plus la moyenne des corrections et la correction la plus forte diminuent d’un cycle à l’autre, plus le marché se normalise (maturité croissante). L’indice est donc décroissant par nature avec le temps.
