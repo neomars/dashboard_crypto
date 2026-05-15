@@ -1,0 +1,88 @@
+[
+    {
+        "id": "simulator",
+        "name": "Simulateur d'Investissement",
+        "icon": "📈",
+        "module": "investment_simulator",
+        "function": "get_simulator_plot",
+        "description": "Testez une stratégie de levier dynamique basée sur les baisses de prix.",
+        "default_scale": "logarithmique",
+        "is_special": true
+    },
+    {
+        "id": "fear_greed",
+        "name": "BTC Fear & Greed Index",
+        "icon": "🌡️",
+        "module": "btc_fear_greed",
+        "function": "get_btc_fear_greed_plot",
+        "description": "Visualisez le prix du Bitcoin coloré selon l'indice de peur et de cupidité.",
+        "default_scale": "linear",
+        "interpretation": "Rouge = Peur extrême, Vert = Cupidité extrême."
+    },
+    {
+        "id": "halving",
+        "name": "BTC Halving",
+        "icon": "🌓",
+        "module": "btc_halving",
+        "function": "get_btc_halving_plot",
+        "description": "Suivez les halvings passés, les sommets/creux de cycle et l'estimation du prochain halving.",
+        "default_scale": "logarithmique"
+    },
+    {
+        "id": "onchain",
+        "name": "On-chain Indicators",
+        "icon": "🔗",
+        "module": "onchain_indicator",
+        "function": "get_onchain_plot",
+        "description": "Identifiez les zones de prix extrêmes avec des moyennes mobiles historiques (200w SMA, Realized Price, Pi Cycle).",
+        "default_scale": "logarithmique"
+    },
+    {
+        "id": "cycle",
+        "name": "Bitcoin 4-Year Cycle",
+        "icon": "🎡",
+        "module": "cycle_indicator",
+        "function": "get_cycle_plot",
+        "description": "Une roue psychologique pour visualiser l'évolution du prix à travers les cycles de 4 ans.",
+        "default_scale": "linear"
+    },
+    {
+        "id": "sopr",
+        "name": "STH-SOPR",
+        "icon": "📉",
+        "module": "sth_sopr",
+        "function": "get_sth_sopr_plot",
+        "description": "Ratio de profit des détenteurs à court terme via Dune Analytics.",
+        "default_scale": "linear",
+        "interpretation": "SOPR > 1 : Profit (Marché haussier). SOPR < 1 : Perte (Marché baissier/Correction). Ligne orange (1.0) : Support/Résistance clé."
+    },
+    {
+        "id": "volume",
+        "name": "BTC Price & Volume",
+        "icon": "📊",
+        "module": "btc_volume",
+        "function": "get_btc_volume_plot",
+        "description": "Analyse du volume de transaction corrélé aux variations de prix journalières.",
+        "default_scale": "linear"
+    },
+    {
+        "id": "vcr",
+        "name": "Volatility Compression Ratio (VCR)",
+        "icon": "📉",
+        "module": "vcr_indicator",
+        "function": "get_vcr_plot",
+        "description": "Mesure de la compression de volatilité pour anticiper les mouvements explosifs.",
+        "default_scale": "linear",
+        "interpretation": "VCR bas (< 0.6) = Forte compression. Anticipation d'un mouvement majeur (hausse ou baisse)."
+    },
+    {
+        "id": "bmi",
+        "name": "Bitcoin Maturation Index (BMI)",
+        "icon": "💎",
+        "module": "bmi_indicator",
+        "function": "get_bmi_plot",
+        "description": "Mesure la maturation du marché Bitcoin à travers la réduction de la sévérité des corrections.",
+        "default_scale": "logarithmique",
+        "interpretation": "BMI décroissant = Marché plus mature. BMI bas (0.3-0.6) = Normalisation."
+    }
+]
