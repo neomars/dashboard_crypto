@@ -77,7 +77,7 @@
     },
     {
         "id": "bmi",
-        "name": "Bitcoin Correction Analysis",
+        "name": "Bitcoin Cycle Correction Analysis",
         "icon": "💎",
         "module": "bmi_indicator",
         "function": "get_bmi_plot",

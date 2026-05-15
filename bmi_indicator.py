@@ -99,7 +99,7 @@ def get_bmi_plot():
         shared_xaxes=True,
         vertical_spacing=0.12,
         row_heights=[0.65, 0.35],
-        subplot_titles=("Prix BTC (échelle logarithmique)", "Comparaison des corrections par cycle")
+        subplot_titles=("Prix BTC (échelle logarithmique)", "Bitcoin Cycle Correction Analysis")
     )
 
     # Prix BTC
