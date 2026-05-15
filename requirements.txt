@@ -1,0 +1,9 @@
+streamlit
+pandas
+yfinance
+requests
+plotly
+matplotlib
+numpy
+fpdf2
+configparser
