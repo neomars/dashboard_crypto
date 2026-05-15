@@ -14,6 +14,8 @@ L'application propose une interface de navigation latérale pour choisir parmi l
 6.  **Simulateur d'Investissement** : Simulation d'une stratégie de levier dynamique (x1 -> x2 lors d'une baisse de x%) avec sortie progressive personnalisable (journalière, hebdomadaire ou mensuelle).
 7.  **BTC Price & Volume** : Graphique en chandeliers japonais (candlestick) avec volume coloré (vert pour les hausses, rouge pour les baisses).
 8.  **Volatility Compression Ratio (VCR)** : Mesure de la compression de volatilité (ratio 30j/365j) pour anticiper les mouvements explosifs.
+9.  **Bitcoin Maturation Index (BMI)** : Mesure la maturation du marché en comparant la sévérité des corrections récentes à la moyenne historique.
+    *   **Formule** : $BMI_t = \frac{\text{Moyenne des 5 plus grosses corrections (> 15\%) des 24 derniers mois}}{\text{Moyenne historique des 5 plus grosses corrections (> 15\%) sur tout l'historique}}$
 
 ## Installation
 
@@ -62,4 +64,5 @@ L'interface s'ouvrira automatiquement dans votre navigateur par défaut (génér
 - `sth_sopr.py` : Récupération et visualisation des données SOPR via Dune.
 - `investment_simulator.py` : Logique et graphique du simulateur d'investissement. Inclut une règle "no-loss" qui reporte les sorties si le prix est inférieur au prix d'achat.
 - `vcr_indicator.py` : Logique de l'indicateur de compression de volatilité.
+- `bmi_indicator.py` : Logique de l'indice de maturation du Bitcoin.
 - `btc_volume.py` : Indicateur de prix et volume coloré.

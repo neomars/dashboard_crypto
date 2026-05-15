@@ -74,5 +74,15 @@
         "description": "Mesure de la compression de volatilité pour anticiper les mouvements explosifs.",
         "default_scale": "linear",
         "interpretation": "VCR bas (< 0.6) = Forte compression. Anticipation d'un mouvement majeur (hausse ou baisse)."
+    },
+    {
+        "id": "bmi",
+        "name": "Bitcoin Maturation Index (BMI)",
+        "icon": "💎",
+        "module": "bmi_indicator",
+        "function": "get_bmi_plot",
+        "description": "Mesure la maturation du marché Bitcoin à travers la réduction de la sévérité des corrections.",
+        "default_scale": "logarithmique",
+        "interpretation": "BMI décroissant = Marché plus mature. BMI bas (0.3-0.6) = Normalisation."
     }
 ]
