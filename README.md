@@ -29,28 +29,28 @@ Exemple de cycles utilisés :
 Pour chaque cycle, on parcourt les données jour par jour et on détecte les corrections significatives selon l’algorithme suivant :
 Soit $P_i$ le prix de clôture du jour $i$.
 On maintient à chaque instant le pic local (peak) :
-$$\text{peak}_i = \max(P_0, P_1, \dots, P_i)$$
+$$\text{Peak}_i = \max(P_0, P_1, \dots, P_i)$$
 Une correction est détectée lorsque :
-$$\frac{P_i}{\text{peak}_i} - 1 \leq -0.15 \quad \text{(soit une baisse d'au moins 15 \% depuis le pic)}$$
+$$\frac{P_i}{\text{Peak}_i} - 1 \leq -0.15 \quad \text{(soit une baisse d'au moins 15 \% depuis le pic)}$$
 On enregistre alors la valeur de la correction :
-$$\text{drop}_i = \left( \frac{P_i}{\text{peak}_i} - 1 \right) \times 100$$
+$$\text{Drop}_i = \left( \frac{P_i}{\text{Peak}_i} - 1 \right) \times 100$$
 
 ### 3. Calcul des métriques par cycle
 
-Pour chaque cycle, on obtient une liste de corrections $\{drop_1, drop_2, \dots, drop_n\}$.
+Pour chaque cycle, on obtient une liste de corrections $\{\text{Drop}_1, \text{Drop}_2, \dots, \text{Drop}_n\}$.
 
 On calcule alors :
 
 **Moyenne des corrections :**
 
 $$
-\text{avg_correction} = \frac{1}{n} \sum_{k=1}^{n} |drop_k|
+\text{Correction Moyenne} = \frac{1}{n} \sum_{k=1}^{n} |\text{Drop}_k|
 $$
 
 **Correction la plus forte :**
 
 $$
-\text{max_correction} = \max_k (|drop_k|)
+\text{Correction Maximale} = \max_k (|\text{Drop}_k|)
 $$
 
 #### 4. Interprétation
