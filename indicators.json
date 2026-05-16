@@ -57,6 +57,16 @@
         "interpretation": "SOPR > 1 : Profit (Marché haussier). SOPR < 1 : Perte (Marché baissier/Correction). Ligne orange (1.0) : Support/Résistance clé."
     },
     {
+        "id": "institutional",
+        "name": "BTC Institutional Holding",
+        "icon": "🏦",
+        "module": "btc_institutional",
+        "function": "get_institutional_plot",
+        "description": "Visualisation de l'accumulation de Bitcoin par les institutionnels (ETFs) via Dune Analytics.",
+        "default_scale": "logarithmique",
+        "interpretation": "Observe la corrélation entre le prix du Bitcoin et les avoirs détenus par les institutionnels."
+    },
+    {
         "id": "volume",
         "name": "BTC Price & Volume",
         "icon": "📊",
