@@ -19,7 +19,12 @@ def get_sth_sopr_plot():
         return None
 
     # ====================== Requête Dune - SOPR ======================
-    QUERY_ID = "6764134" # ID fixe pour LTH/STH SOPR
+    try:
+        QUERY_ID = config['DUNE']['sopr_query_id'].strip().strip('"').strip("'")
+    except KeyError:
+        st.error("ID de requête 'sopr_query_id' manquant dans config.ini sous la section [DUNE]")
+        return None
+
     url = f"https://api.dune.com/api/v1/query/{QUERY_ID}/results"
     headers = {
         "X-Dune-API-Key": DUNE_API_KEY,
@@ -32,7 +37,7 @@ def get_sth_sopr_plot():
             st.error("Erreur API Dune : 401 (Non autorisé). Veuillez vérifier que vous avez remplacé 'VOTRE_CLE_API_ICI' par une clé API valide dans le fichier config.ini.")
             return None
         elif response.status_code == 404:
-            st.error(f"Erreur API Dune : 404 (Non trouvé). La requête avec l'ID {QUERY_ID} n'existe pas ou est privée. Veuillez vérifier le 'query_id' dans config.ini.")
+            st.error(f"Erreur API Dune : 404 (Non trouvé). La requête avec l'ID {QUERY_ID} n'existe pas ou est privée. Veuillez vérifier le 'sopr_query_id' dans config.ini.")
             return None
         elif response.status_code == 400:
             try:

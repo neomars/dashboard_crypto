@@ -78,16 +78,19 @@ cd <votre-repo>
 pip install -r requirements.txt
 ```
 
-### 4. Configuration de l'API Dune (pour le SOPR)
-L'indicateur STH-SOPR nécessite une clé API Dune Analytics.
+### 4. Configuration de l'API Dune
+Les indicateurs basés sur Dune Analytics (SOPR et Institutional Holding) nécessitent une clé API et des IDs de requêtes valides.
+
 1. Créez un fichier nommé `config.ini` à la racine du projet.
-2. Ajoutez-y votre clé API comme suit :
+2. Ajoutez-y vos informations comme suit :
 ```ini
 [DUNE]
 api_key = VOTRE_CLE_API_ICI
+sopr_query_id = 6764134
+institutional_query_id = 6987189
 ```
 
-*Note : Le fichier `config.ini` est ignoré par git pour protéger votre clé.*
+*Note : Le fichier `config.ini` est ignoré par git pour protéger vos clés et configurations personnelles.*
 
 ## Utilisation
 
