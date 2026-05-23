@@ -19,9 +19,12 @@ def get_institutional_plot():
         return None
 
     # ====================== Query Dune ======================
-    # ID pour les ETFs Bitcoin Spot (Holdings Institutionnels)
-    # Si l'utilisateur souhaite un autre ID, il peut le modifier ici.
-    QUERY_ID = "3437637"
+    # Récupération de l'ID depuis config.ini
+    try:
+        QUERY_ID = config['DUNE']['query_id'].strip().strip('"').strip("'")
+    except KeyError:
+        # Fallback au cas où
+        QUERY_ID = "6987189"
 
     url = f"https://api.dune.com/api/v1/query/{QUERY_ID}/results"
     headers = {
