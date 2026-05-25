@@ -26,29 +26,6 @@ st.sidebar.title("🚀 Navigation")
 if st.sidebar.button("🏠 Accueil", use_container_width=True):
     st.session_state.selection = "Accueil"
 
-# --- Configuration API Dune ---
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔑 Configuration")
-with st.sidebar.expander("API Dune Analytics"):
-    st.info("Vous pouvez obtenir une clé API gratuite en créant un compte sur [dune.com](https://dune.com).")
-
-    current_key = get_dune_api_key()
-    new_key = st.text_input("Clé API Dune", value=current_key, type="password")
-
-    col_save, col_del = st.columns(2)
-    with col_save:
-        if st.button("Sauvegarder"):
-            save_dune_api_key(new_key)
-            st.success("Clé sauvegardée !")
-            st.cache_data.clear() # On vide le cache car les données dépendent de la clé
-            st.rerun()
-    with col_del:
-        if st.button("Supprimer"):
-            delete_dune_api_key()
-            st.warning("Clé supprimée")
-            st.cache_data.clear()
-            st.rerun()
-
 st.sidebar.markdown("---")
 
 # Section Simulation
@@ -85,6 +62,29 @@ selection = st.session_state.selection
 if selection == "Accueil":
     st.write("## Bienvenue sur votre interface d'analyse financière.")
     st.write("Cette application permet de visualiser différents indicateurs sur les marchés crypto et financiers.")
+
+    # --- Configuration API Dune ---
+    st.write("### 🔑 Configuration")
+    with st.expander("Configurer l'API Dune Analytics"):
+        st.info("Les indicateurs basés sur Dune (SOPR, Institutional Holdings) nécessitent une clé API. Vous pouvez obtenir une clé gratuite en créant un compte sur [dune.com](https://dune.com).")
+
+        current_key = get_dune_api_key()
+        new_key = st.text_input("Clé API Dune", value=current_key, type="password")
+
+        col_save, col_del = st.columns([1, 1])
+        with col_save:
+            if st.button("Sauvegarder la clé", use_container_width=True):
+                save_dune_api_key(new_key)
+                st.success("Clé sauvegardée !")
+                st.cache_data.clear()
+                st.rerun()
+        with col_del:
+            if st.button("Supprimer la clé", use_container_width=True):
+                delete_dune_api_key()
+                st.warning("Clé supprimée")
+                st.cache_data.clear()
+                st.rerun()
+
     st.write("### Explorez nos outils via la barre latérale :")
 
     col1, col2 = st.columns(2)
