@@ -118,12 +118,13 @@ def get_institutional_plot():
         height=900,
         hovermode="x unified",
         legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02
         ),
+        margin=dict(r=150), # Ajout de marge à droite pour la légende
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)'
     )
