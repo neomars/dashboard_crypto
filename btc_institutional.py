@@ -19,7 +19,7 @@ def get_institutional_plot():
         return None
 
     # ====================== Query Dune ======================
-    QUERY_ID = "6987189"
+    QUERY_ID = "3382000"
 
     url = f"https://api.dune.com/api/v1/query/{QUERY_ID}/results"
     headers = {
@@ -41,45 +41,28 @@ def get_institutional_plot():
         st.warning("Aucune donnée retournée par la requête Dune.")
         return None
 
-    df_inst = pd.DataFrame(data)
+    df_raw = pd.DataFrame(data)
 
-    # Identification de la colonne temporelle
-    time_col = None
-    for c in ['time', 'date', 'block_time', 'day']:
-        if c in df_inst.columns:
-            time_col = c
-            break
+    # Identification des colonnes
+    time_col = next((c for c in ['time', 'date', 'block_time', 'day'] if c in df_raw.columns), None)
+    ticker_col = next((c for c in ['etf_ticker', 'ticker', 'symbol'] if c in df_raw.columns), None)
+    val_col = next((c for c in ['tvl', 'holding', 'btc_held', 'amount'] if c in df_raw.columns), None)
 
-    if not time_col:
-        st.error(f"Colonne temporelle non trouvée. Colonnes dispos : {list(df_inst.columns)}")
+    if not time_col or not ticker_col or not val_col:
+        st.error(f"Structure de données Dune inattendue. Colonnes : {list(df_raw.columns)}")
         return None
 
-    df_inst['date_merge'] = pd.to_datetime(df_inst[time_col]).dt.tz_localize(None)
-    df_inst = df_inst.sort_values('date_merge').reset_index(drop=True)
+    df_raw[time_col] = pd.to_datetime(df_raw[time_col]).dt.tz_localize(None)
 
-    # Identification de la colonne de holdings
-    # On cherche une colonne qui contient 'holding', 'btc', 'amount' ou 'total'
-    val_col = None
-    for c in df_inst.columns:
-        low_c = c.lower()
-        if 'holding' in low_c or 'total_btc' in low_c or 'btc_held' in low_c:
-            val_col = c
-            break
+    # Pivot pour avoir une colonne par émetteur (ETF)
+    df_pivot = df_raw.pivot(index=time_col, columns=ticker_col, values=val_col).ffill().fillna(0)
+    df_pivot.index.name = 'date_merge'
 
-    if not val_col:
-        # Fallback sur la première colonne numérique qui n'est pas la date
-        for c in df_inst.columns:
-            if c != time_col and pd.api.types.is_numeric_dtype(df_inst[c]):
-                val_col = c
-                break
-
-    if not val_col:
-        st.error(f"Colonne de données (Holdings) non trouvée. Colonnes dispos : {list(df_inst.columns)}")
-        return None
+    # Calcul du total pour le merge avec le prix
+    df_pivot['Total_Institutional'] = df_pivot.sum(axis=1)
 
     # ====================== BTC Price ======================
-    min_date = df_inst['date_merge'].min().strftime('%Y-%m-%d')
-    # On s'assure d'avoir au moins un peu d'historique si min_date est trop récent
+    min_date = df_pivot.index.min().strftime('%Y-%m-%d')
     btc = yf.download('BTC-USD', start=min_date, interval='1d', progress=False)
 
     if btc.empty:
@@ -95,8 +78,7 @@ def get_institutional_plot():
     btc_df['date_merge'] = pd.to_datetime(btc_df['date_merge']).dt.tz_localize(None)
 
     # ====================== Fusion ======================
-    df = pd.merge(btc_df, df_inst, on='date_merge', how='left')
-    df[val_col] = df[val_col].ffill()
+    df = pd.merge(btc_df, df_pivot, on='date_merge', how='left').ffill().fillna(0)
 
     # ====================== Graphique ======================
     fig = make_subplots(
@@ -104,35 +86,50 @@ def get_institutional_plot():
         shared_xaxes=True,
         vertical_spacing=0.08,
         row_heights=[0.65, 0.35],
-        subplot_titles=("Prix du Bitcoin (USD)", "Holdings Institutionnels (BTC)")
+        subplot_titles=("Prix du Bitcoin (USD)", "Breakdown des Holdings Institutionnels (BTC)")
     )
 
+    # BTC Price
     fig.add_trace(go.Scatter(
         x=df['date_merge'], y=df['BTC_Price'],
         mode='lines', name='Prix BTC',
         line=dict(color='#00CCFF', width=2)
     ), row=1, col=1)
 
-    fig.add_trace(go.Scatter(
-        x=df['date_merge'], y=df[val_col],
-        mode='lines', name='Holdings Institutionnels',
-        line=dict(color='#00FFAA', width=3),
-        fill='tozeroy'
-    ), row=2, col=1)
+    # Stacked Area pour les émetteurs
+    # On exclut 'Total_Institutional' et 'BTC_Price' des émetteurs
+    tickers = [c for c in df_pivot.columns if c != 'Total_Institutional']
+
+    for ticker in tickers:
+        fig.add_trace(go.Scatter(
+            x=df['date_merge'],
+            y=df[ticker],
+            mode='lines',
+            name=ticker,
+            stackgroup='one', # Création du graphique empilé
+            line=dict(width=0.5),
+            hovertemplate='%{y:,.0f} BTC'
+        ), row=2, col=1)
 
     fig.update_layout(
-        title="Bitcoin - Holdings Institutionnels vs Prix",
+        title="Bitcoin - Holdings Institutionnels Détallés vs Prix",
         xaxis_title="Date",
         template="plotly_dark",
-        height=850,
+        height=900,
         hovermode="x unified",
-        legend=dict(x=0.01, y=0.99),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)'
     )
 
     fig.update_yaxes(title_text="Prix BTC (USD)", type="log", row=1, col=1)
-    fig.update_yaxes(title_text="BTC Institutionnels", row=2, col=1)
+    fig.update_yaxes(title_text="Holdings (BTC)", row=2, col=1)
 
     return fig
 
