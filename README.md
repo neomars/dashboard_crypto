@@ -86,11 +86,9 @@ Les indicateurs basés sur Dune Analytics (SOPR et Institutional Holding) néces
 ```ini
 [DUNE]
 api_key = VOTRE_CLE_API_ICI
-sopr_query_id = 6764134
-institutional_query_id = 6987189
 ```
 
-*Note : Le fichier `config.ini` est ignoré par git pour protéger vos clés et configurations personnelles.*
+*Note : Le fichier `config.ini` est ignoré par git pour protéger votre clé.*
 
 ## Utilisation
 

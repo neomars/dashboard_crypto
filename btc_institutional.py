@@ -19,11 +19,7 @@ def get_institutional_plot():
         return None
 
     # ====================== Query Dune ======================
-    try:
-        QUERY_ID = config['DUNE']['institutional_query_id'].strip().strip('"').strip("'")
-    except KeyError:
-        st.error("ID de requête 'institutional_query_id' manquant dans config.ini sous la section [DUNE]")
-        return None
+    QUERY_ID = "6987189"
 
     url = f"https://api.dune.com/api/v1/query/{QUERY_ID}/results"
     headers = {
