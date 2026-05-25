@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import importlib
 from datetime import datetime
+from config_manager import get_dune_api_key, save_dune_api_key, delete_dune_api_key
 
 # --- Chargement de la configuration ---
 def load_indicators():
@@ -24,6 +25,29 @@ st.sidebar.title("🚀 Navigation")
 # Bouton Accueil
 if st.sidebar.button("🏠 Accueil", use_container_width=True):
     st.session_state.selection = "Accueil"
+
+# --- Configuration API Dune ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔑 Configuration")
+with st.sidebar.expander("API Dune Analytics"):
+    st.info("Vous pouvez obtenir une clé API gratuite en créant un compte sur [dune.com](https://dune.com).")
+
+    current_key = get_dune_api_key()
+    new_key = st.text_input("Clé API Dune", value=current_key, type="password")
+
+    col_save, col_del = st.columns(2)
+    with col_save:
+        if st.button("Sauvegarder"):
+            save_dune_api_key(new_key)
+            st.success("Clé sauvegardée !")
+            st.cache_data.clear() # On vide le cache car les données dépendent de la clé
+            st.rerun()
+    with col_del:
+        if st.button("Supprimer"):
+            delete_dune_api_key()
+            st.warning("Clé supprimée")
+            st.cache_data.clear()
+            st.rerun()
 
 st.sidebar.markdown("---")
 

@@ -79,16 +79,17 @@ pip install -r requirements.txt
 ```
 
 ### 4. Configuration de l'API Dune
-Les indicateurs basés sur Dune Analytics (SOPR et Institutional Holding) nécessitent une clé API et des IDs de requêtes valides.
+Les indicateurs basés sur Dune Analytics (SOPR et Institutional Holding) nécessitent une clé API.
 
-1. Créez un fichier nommé `config.ini` à la racine du projet.
-2. Ajoutez-y vos informations comme suit :
-```ini
-[DUNE]
-api_key = VOTRE_CLE_API_ICI
-```
+Vous pouvez configurer cette clé de deux manières :
+1.  **Via l'interface** : Dans la barre latérale, sous la section **Configuration**, dépliez "API Dune Analytics" pour saisir et sauvegarder votre clé.
+2.  **Via le fichier `config.ini`** : Créez un fichier nommé `config.ini` à la racine du projet et ajoutez-y vos informations :
+    ```ini
+    [DUNE]
+    api_key = VOTRE_CLE_API_ICI
+    ```
 
-*Note : Le fichier `config.ini` est ignoré par git pour protéger votre clé.*
+*Note : Vous pouvez obtenir une clé gratuite sur [dune.com](https://dune.com). Le fichier `config.ini` est ignoré par git pour protéger votre clé.*
 
 ## Utilisation
 
