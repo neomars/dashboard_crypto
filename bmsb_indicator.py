@@ -18,12 +18,17 @@ def fetch_bmsb_data():
     if isinstance(btc.columns, pd.MultiIndex):
         btc.columns = btc.columns.get_level_values(0)
 
-    # Pour les versions récentes de yfinance qui renvoient des noms de colonnes bizarres avec 1 seul ticker
-    if 'Close' not in btc.columns and any('Close' in str(c) for c in btc.columns):
-        btc.columns = [c[0] if isinstance(c, tuple) else c for c in btc.columns]
-
+    # Reset index pour avoir la date en colonne
     btc = btc.reset_index()
+
+    # Mise en minuscules des noms de colonnes
     btc.columns = [str(c).lower() for c in btc.columns]
+
+    # S'assurer que la colonne 'date' existe
+    if 'date' not in btc.columns:
+        # Parfois l'index s'appelle 'index' après reset_index
+        if 'index' in btc.columns:
+            btc = btc.rename(columns={'index': 'date'})
 
     return btc
 
@@ -102,7 +107,7 @@ def plot_bear_market_support_band(df: pd.DataFrame, sma_len: int, ema_len: int):
         mode='lines',
         line=dict(color='rgba(0,0,0,0)'),
         fillcolor='rgba(255, 100, 100, 0.15)',
-        name="Zone Bear Market"
+        name="Zone Bear Market Support Band"
     ), row=1, col=1)
 
     fig.update_layout(
