@@ -16,6 +16,8 @@ L'application propose une interface de navigation latérale pour choisir parmi l
 8.  **Volatility Compression Ratio (VCR)** : Mesure de la compression de volatilité (ratio 30j/365j) pour anticiper les mouvements explosifs.
 9.  **Bitcoin Cycle Correction Analysis** : Analyse comparative de la sévérité des corrections (>15%) pour chaque cycle de halving depuis 2010. Identifie les sommets (Tops) et les creux (Bottoms) historiques.
 10. **BTC Institutional Holding** : Visualisation de l'accumulation de Bitcoin par les institutionnels (ETFs Spot) corrélée au prix, via Dune Analytics.
+11. **Bear Market Support Band** : Indicateur de Benjamin Cowen combinant la SMA 20 semaines et l'EMA 21 semaines pour identifier les phases de marché.
+12. **UTXO Realized Cap Age Bands** : Visualisation des bandes d'âge du Realized Cap (HODL Waves en valeur réalisée) via l'API Dune Analytics.
 
 ### Calcul du Bitcoin Cycle Correction Analysis
 
