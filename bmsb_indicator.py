@@ -26,7 +26,6 @@ def fetch_bmsb_data():
 
     # S'assurer que la colonne 'date' existe
     if 'date' not in btc.columns:
-        # Parfois l'index s'appelle 'index' après reset_index
         if 'index' in btc.columns:
             btc = btc.rename(columns={'index': 'date'})
 
@@ -37,6 +36,9 @@ def calculate_bear_market_support_band(df: pd.DataFrame, sma_length: int = 20, e
     Calcule le Bear Market Support Band (Benjamin Cowen)
     - 20-week SMA (vert)
     - 21-week EMA (rouge)
+
+    Paramètres :
+        df : DataFrame avec colonnes ['date', 'close'] (idéalement en timeframe weekly)
     """
     df = df.copy()
     df['date'] = pd.to_datetime(df['date'])
@@ -53,15 +55,21 @@ def calculate_bear_market_support_band(df: pd.DataFrame, sma_length: int = 20, e
 
     return df
 
-def plot_bear_market_support_band(df: pd.DataFrame, sma_len: int, ema_len: int):
+def plot_bear_market_support_band(df: pd.DataFrame, sma_len: int = 20, ema_len: int = 21, title: str = "Bitcoin - Bear Market Support Band (Benjamin Cowen)"):
     """
     Retourne un graphique Plotly du Bear Market Support Band
     """
+    # On s'assure que les calculs sont faits si les colonnes manquent
+    if 'bmsb_sma20' not in df.columns or 'bmsb_ema21' not in df.columns:
+        df = calculate_bear_market_support_band(df, sma_length=sma_len, ema_length=ema_len)
+
     # Nettoyage pour éviter les erreurs de rendu (notamment en échelle log)
     df = df.dropna(subset=['close', 'bmsb_sma20', 'bmsb_ema21'])
     df = df[df['close'] > 0]
 
-    fig = go.Figure()
+    fig = make_subplots(rows=1, cols=1, shared_xaxes=True,
+                        vertical_spacing=0.02,
+                        subplot_titles=[title])
 
     # Prix en bougies si disponible
     if all(col in df.columns for col in ['open', 'high', 'low', 'close']):
@@ -74,26 +82,26 @@ def plot_bear_market_support_band(df: pd.DataFrame, sma_len: int, ema_len: int):
             name="BTC Price",
             increasing_line_color='#00ff88',
             decreasing_line_color='#ff3366'
-        ))
+        ), row=1, col=1)
     else:
         fig.add_trace(go.Scatter(
             x=df['date'], y=df['close'],
             name="BTC Price",
             line=dict(color='#00CCFF', width=2)
-        ))
+        ), row=1, col=1)
 
     # Bandes
     fig.add_trace(go.Scatter(
         x=df['date'], y=df['bmsb_sma20'],
         name=f"{sma_len}-week SMA (Support)",
         line=dict(color='#00ff00', width=2.5)
-    ))
+    ), row=1, col=1)
 
     fig.add_trace(go.Scatter(
         x=df['date'], y=df['bmsb_ema21'],
         name=f"{ema_len}-week EMA (Resistance)",
         line=dict(color='#ff0000', width=2.5)
-    ))
+    ), row=1, col=1)
 
     # Remplissage entre les bandes
     fig.add_trace(go.Scatter(
@@ -102,7 +110,7 @@ def plot_bear_market_support_band(df: pd.DataFrame, sma_len: int, ema_len: int):
         mode='lines',
         line=dict(color='rgba(0,0,0,0)'),
         showlegend=False
-    ))
+    ), row=1, col=1)
 
     fig.add_trace(go.Scatter(
         x=df['date'], y=df['bmsb_ema21'],
@@ -110,8 +118,8 @@ def plot_bear_market_support_band(df: pd.DataFrame, sma_len: int, ema_len: int):
         mode='lines',
         line=dict(color='rgba(0,0,0,0)'),
         fillcolor='rgba(255, 100, 100, 0.15)',
-        name="Zone Bear Market Support Band"
-    ))
+        name="Zone Bear Market"
+    ), row=1, col=1)
 
     fig.update_layout(
         height=700,
@@ -145,7 +153,7 @@ def get_bmsb_plot():
     with col1:
         st.metric("Régime actuel", f"{color} {current_regime}")
 
-    fig = plot_bear_market_support_band(df_calc, sma_len, ema_len)
+    fig = plot_bear_market_support_band(df_calc, sma_len=sma_len, ema_len=ema_len)
     return fig
 
 if __name__ == "__main__":
