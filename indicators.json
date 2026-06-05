@@ -94,5 +94,25 @@
         "description": "Analyse comparative de la sévérité des corrections par cycle de halving (2010-2025).",
         "default_scale": "logarithmique",
         "interpretation": "Compare la moyenne et le maximum des corrections (>15%) entre les différents cycles."
+    },
+    {
+        "id": "bmsb",
+        "name": "Bear Market Support Band",
+        "icon": "🐻",
+        "module": "bmsb_indicator",
+        "function": "get_bmsb_plot",
+        "description": "Indicateur de Benjamin Cowen combinant la SMA 20 semaines et l'EMA 21 semaines pour identifier les phases de marché.",
+        "default_scale": "logarithmique",
+        "interpretation": "Au-dessus des bandes = Bull Market (Support). En-dessous des bandes = Bear Market (Résistance)."
+    },
+    {
+        "id": "utxo_bands",
+        "name": "UTXO Realized Cap Age Bands",
+        "icon": "📊",
+        "module": "realized_cap_utxo",
+        "function": "get_realized_cap_utxo_plot",
+        "description": "Visualisation des bandes d'âge du Realized Cap (HODL Waves en valeur réalisée) via Dune Analytics.",
+        "default_scale": "linear",
+        "interpretation": "Montre la répartition de la valeur détenue par différentes cohortes d'âge. Utile pour identifier les phases d'accumulation et de distribution."
     }
 ]
