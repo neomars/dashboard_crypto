@@ -49,13 +49,3 @@ def save_dune_api_key(api_key):
 
 def delete_dune_api_key():
     delete_api_key('DUNE', 'api_key')
-
-# Helper functions for CryptoQuant
-def get_cryptoquant_api_key():
-    return get_api_key('CRYPTOQUANT', 'api_key')
-
-def save_cryptoquant_api_key(api_key):
-    save_api_key('CRYPTOQUANT', 'api_key', api_key)
-
-def delete_cryptoquant_api_key():
-    delete_api_key('CRYPTOQUANT', 'api_key')

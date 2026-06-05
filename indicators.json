@@ -111,7 +111,7 @@
         "icon": "📊",
         "module": "realized_cap_utxo",
         "function": "get_realized_cap_utxo_plot",
-        "description": "Visualisation des bandes d'âge du Realized Cap (HODL Waves en valeur réalisée) via CryptoQuant.",
+        "description": "Visualisation des bandes d'âge du Realized Cap (HODL Waves en valeur réalisée) via Dune Analytics.",
         "default_scale": "linear",
         "interpretation": "Montre la répartition de la valeur détenue par différentes cohortes d'âge. Utile pour identifier les phases d'accumulation et de distribution."
     }

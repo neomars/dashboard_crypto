@@ -3,8 +3,7 @@ import json
 import importlib
 from datetime import datetime
 from config_manager import (
-    get_dune_api_key, save_dune_api_key, delete_dune_api_key,
-    get_cryptoquant_api_key, save_cryptoquant_api_key, delete_cryptoquant_api_key
+    get_dune_api_key, save_dune_api_key, delete_dune_api_key
 )
 
 # --- Chargement de la configuration ---
@@ -69,49 +68,25 @@ if selection == "Accueil":
     # --- Configuration API keys ---
     st.write("### 🔑 Configuration")
 
-    col_config1, col_config2 = st.columns(2)
+    with st.expander("Configurer l'API Dune Analytics"):
+        st.info("Les indicateurs basés sur Dune (SOPR, Institutional Holdings, UTXO Age Bands) nécessitent une clé API. [dune.com](https://dune.com).")
 
-    with col_config1:
-        with st.expander("Configurer l'API Dune Analytics"):
-            st.info("Les indicateurs basés sur Dune (SOPR, Institutional Holdings) nécessitent une clé API. [dune.com](https://dune.com).")
+        current_key_dune = get_dune_api_key()
+        new_key_dune = st.text_input("Clé API Dune", value=current_key_dune, type="password", key="dune_key_input")
 
-            current_key_dune = get_dune_api_key()
-            new_key_dune = st.text_input("Clé API Dune", value=current_key_dune, type="password", key="dune_key_input")
-
-            c_save, c_del = st.columns([1, 1])
-            with c_save:
-                if st.button("Sauvegarder Dune", use_container_width=True):
-                    save_dune_api_key(new_key_dune)
-                    st.success("Clé Dune sauvegardée !")
-                    st.cache_data.clear()
-                    st.rerun()
-            with c_del:
-                if st.button("Supprimer Dune", use_container_width=True):
-                    delete_dune_api_key()
-                    st.warning("Clé Dune supprimée")
-                    st.cache_data.clear()
-                    st.rerun()
-
-    with col_config2:
-        with st.expander("Configurer l'API CryptoQuant"):
-            st.info("Les indicateurs CryptoQuant nécessitent une clé API. Vous pouvez obtenir une clé sur [cryptoquant.com](https://cryptoquant.com).")
-
-            current_key_cq = get_cryptoquant_api_key()
-            new_key_cq = st.text_input("Clé API CryptoQuant", value=current_key_cq, type="password", key="cq_key_input")
-
-            cq_save, cq_del = st.columns([1, 1])
-            with cq_save:
-                if st.button("Sauvegarder CryptoQuant", use_container_width=True):
-                    save_cryptoquant_api_key(new_key_cq)
-                    st.success("Clé CryptoQuant sauvegardée !")
-                    st.cache_data.clear()
-                    st.rerun()
-            with cq_del:
-                if st.button("Supprimer CryptoQuant", use_container_width=True):
-                    delete_cryptoquant_api_key()
-                    st.warning("Clé CryptoQuant supprimée")
-                    st.cache_data.clear()
-                    st.rerun()
+        c_save, c_del = st.columns([1, 2])
+        with c_save:
+            if st.button("Sauvegarder Dune", use_container_width=True):
+                save_dune_api_key(new_key_dune)
+                st.success("Clé Dune sauvegardée !")
+                st.cache_data.clear()
+                st.rerun()
+        with c_del:
+            if st.button("Supprimer Dune", use_container_width=True):
+                delete_dune_api_key()
+                st.warning("Clé Dune supprimée")
+                st.cache_data.clear()
+                st.rerun()
 
     st.write("### Explorez nos outils via la barre latérale :")
 

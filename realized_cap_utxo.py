@@ -2,48 +2,56 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime
 import numpy as np
-from config_manager import get_cryptoquant_api_key
+from config_manager import get_dune_api_key
 
 @st.cache_data(ttl=3600)
-def get_cryptoquant_utxo_realized_cap():
-    """Récupère les données dynamiques depuis CryptoQuant"""
-    url = "https://api.cryptoquant.com/v1/btc/chart/network-indicator/realized-cap-utxo-age-bands-percent"
+def get_dune_utxo_realized_cap():
+    """Récupère les données depuis Dune Analytics"""
+    # Query ID : Bitcoin: Realized Cap - UTXO Age Bands (%)
+    query_id = "5130650"
 
-    api_key = get_cryptoquant_api_key()
+    api_key = get_dune_api_key()
+    url = f"https://api.dune.com/api/v1/query/{query_id}/results"
 
     headers = {
-        "accept": "application/json",
+        "x-dune-api-key": api_key,
+        "accept": "application/json"
     }
 
     if not api_key:
-        st.warning("Clé API CryptoQuant manquante dans la configuration. [cryptoquant.com](https://cryptoquant.com)")
+        st.warning("Clé API Dune manquante. Crée-la sur dune.com/settings/api")
         return get_fallback_data()
 
-    headers["x-api-key"] = api_key
-
     try:
-        response = requests.get(url, headers=headers, timeout=20)
+        response = requests.get(url, headers=headers, timeout=30)
+
         if response.status_code == 401:
-            st.error("Erreur API CryptoQuant : 401 (Non autorisé). Veuillez vérifier votre clé API dans l'onglet Accueil.")
+            st.error("Erreur 401 : Clé API Dune invalide.")
             return get_fallback_data()
         elif response.status_code != 200:
-            st.error(f"Erreur API CryptoQuant ({response.status_code}): {response.text}")
+            st.error(f"Erreur Dune ({response.status_code})")
             return get_fallback_data()
 
         data = response.json()
-        if 'result' not in data or 'data' not in data['result']:
-            st.error("Format de réponse CryptoQuant inattendu.")
+        if 'result' not in data or 'rows' not in data['result']:
+            st.error("Format de réponse inattendu.")
             return get_fallback_data()
 
-        df = pd.DataFrame(data['result']['data'])
-        df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values('date')
+        df = pd.DataFrame(data['result']['rows'])
+
+        # Normalisation du nom de la colonne date si nécessaire
+        # Dune retourne souvent 'time' ou 'block_date'
+        time_cols = [c for c in df.columns if c.lower() in ['time', 'date', 'block_date', 'block_time']]
+        if time_cols:
+            df = df.rename(columns={time_cols[0]: 'date'})
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values('date')
 
         return df
     except Exception as e:
-        st.error(f"Erreur lors de la récupération des données CryptoQuant : {e}")
+        st.error(f"Erreur Dune : {e}")
         return get_fallback_data()
 
 
@@ -122,10 +130,7 @@ def plot_realized_cap_utxo_age_bands(df: pd.DataFrame):
 
 def get_realized_cap_utxo_plot():
     """Fonction principale pour Streamlit"""
-    # st.subheader("📊 Bitcoin: Realized Cap - UTXO Age Bands (%)")
-    # st.caption("Données dynamiques • Source : CryptoQuant")
-
-    df = get_cryptoquant_utxo_realized_cap()
+    df = get_dune_utxo_realized_cap()
 
     if df is not None and not df.empty:
         fig = plot_realized_cap_utxo_age_bands(df)
