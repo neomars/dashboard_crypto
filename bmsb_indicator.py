@@ -57,8 +57,11 @@ def plot_bear_market_support_band(df: pd.DataFrame, sma_len: int, ema_len: int):
     """
     Retourne un graphique Plotly du Bear Market Support Band
     """
-    fig = make_subplots(rows=1, cols=1, shared_xaxes=True,
-                        vertical_spacing=0.02)
+    # Nettoyage pour éviter les erreurs de rendu (notamment en échelle log)
+    df = df.dropna(subset=['close', 'bmsb_sma20', 'bmsb_ema21'])
+    df = df[df['close'] > 0]
+
+    fig = go.Figure()
 
     # Prix en bougies si disponible
     if all(col in df.columns for col in ['open', 'high', 'low', 'close']):
@@ -71,26 +74,26 @@ def plot_bear_market_support_band(df: pd.DataFrame, sma_len: int, ema_len: int):
             name="BTC Price",
             increasing_line_color='#00ff88',
             decreasing_line_color='#ff3366'
-        ), row=1, col=1)
+        ))
     else:
         fig.add_trace(go.Scatter(
             x=df['date'], y=df['close'],
             name="BTC Price",
             line=dict(color='#00CCFF', width=2)
-        ), row=1, col=1)
+        ))
 
     # Bandes
     fig.add_trace(go.Scatter(
         x=df['date'], y=df['bmsb_sma20'],
         name=f"{sma_len}-week SMA (Support)",
         line=dict(color='#00ff00', width=2.5)
-    ), row=1, col=1)
+    ))
 
     fig.add_trace(go.Scatter(
         x=df['date'], y=df['bmsb_ema21'],
         name=f"{ema_len}-week EMA (Resistance)",
         line=dict(color='#ff0000', width=2.5)
-    ), row=1, col=1)
+    ))
 
     # Remplissage entre les bandes
     fig.add_trace(go.Scatter(
@@ -99,7 +102,7 @@ def plot_bear_market_support_band(df: pd.DataFrame, sma_len: int, ema_len: int):
         mode='lines',
         line=dict(color='rgba(0,0,0,0)'),
         showlegend=False
-    ), row=1, col=1)
+    ))
 
     fig.add_trace(go.Scatter(
         x=df['date'], y=df['bmsb_ema21'],
@@ -108,7 +111,7 @@ def plot_bear_market_support_band(df: pd.DataFrame, sma_len: int, ema_len: int):
         line=dict(color='rgba(0,0,0,0)'),
         fillcolor='rgba(255, 100, 100, 0.15)',
         name="Zone Bear Market Support Band"
-    ), row=1, col=1)
+    ))
 
     fig.update_layout(
         height=700,

@@ -21,7 +21,7 @@ def get_cryptoquant_utxo_realized_cap():
         st.warning("Clé API CryptoQuant manquante dans la configuration. [cryptoquant.com](https://cryptoquant.com)")
         return get_fallback_data()
 
-    headers["Authorization"] = f"Bearer {api_key}"
+    headers["x-api-key"] = api_key
 
     try:
         response = requests.get(url, headers=headers, timeout=20)

@@ -243,15 +243,21 @@ else:
                 module = importlib.import_module(selected_ind["module"])
                 plot_func = getattr(module, selected_ind["function"])
 
+                # Appel de la fonction de génération
                 fig = plot_func()
+
                 if fig:
+                    # Application du type d'échelle sélectionné dans la barre latérale
                     if hasattr(fig, 'update_layout'):
                         fig.update_layout(yaxis_type=yaxis_type)
+
+                    # Rendu du graphique
                     st.plotly_chart(fig, use_container_width=True)
 
+                    # Affichage de l'interprétation si disponible
                     if selected_ind.get("interpretation"):
-                        st.write(f"**Interprétation :** {selected_ind['interpretation']}")
+                        st.info(f"💡 **Interprétation :** {selected_ind['interpretation']}")
                 else:
-                    st.error("Impossible de générer le graphique.")
+                    st.error(f"Impossible de générer le graphique pour {selected_ind['name']}. Vérifiez les sources de données ou votre configuration API.")
         except Exception as e:
             st.error(f"Erreur lors du chargement de l'indicateur : {e}")
