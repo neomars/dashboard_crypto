@@ -8,47 +8,52 @@ from config_manager import get_dune_api_key
 
 @st.cache_data(ttl=3600)
 def get_dune_utxo_realized_cap():
-    """Récupère les données depuis Dune Analytics"""
-    # Query ID : Bitcoin: Realized Cap - UTXO Age Bands (%)
-    query_id = "5130650"
+    """Récupère les données depuis Dune (Query ID 6502239 ou la tienne)"""
+    query_id = 6502239  # ← Change si tu crées ta propre query
 
     api_key = get_dune_api_key()
-    url = f"https://api.dune.com/api/v1/query/{query_id}/results"
+    if not api_key:
+        st.warning("Clé API Dune manquante. Crée-la sur dune.com/settings/api")
+        return get_fallback_data()
 
+    # Récupération des résultats (query déjà exécutée)
+    url = f"https://api.dune.com/api/v1/query/{query_id}/results"
     headers = {
         "x-dune-api-key": api_key,
         "accept": "application/json"
     }
 
-    if not api_key:
-        st.warning("Clé API Dune manquante. Crée-la sur dune.com/settings/api")
-        return get_fallback_data()
-
     try:
         response = requests.get(url, headers=headers, timeout=30)
-
         if response.status_code == 401:
-            st.error("Erreur 401 : Clé API Dune invalide.")
+            st.error("Clé API Dune invalide.")
             return get_fallback_data()
         elif response.status_code != 200:
-            st.error(f"Erreur Dune ({response.status_code})")
+            st.error(f"Erreur Dune : {response.status_code}")
             return get_fallback_data()
 
         data = response.json()
         if 'result' not in data or 'rows' not in data['result']:
-            st.error("Format de réponse inattendu.")
+            st.error("Format inattendu.")
             return get_fallback_data()
 
         df = pd.DataFrame(data['result']['rows'])
 
-        # Normalisation du nom de la colonne date si nécessaire
-        # Dune retourne souvent 'time' ou 'block_date'
+        # Adaptation selon les colonnes renvoyées (exemple courant)
         time_cols = [c for c in df.columns if c.lower() in ['time', 'date', 'block_date', 'block_time']]
         if time_cols:
             df = df.rename(columns={time_cols[0]: 'date'})
             df['date'] = pd.to_datetime(df['date'])
-            df = df.sort_values('date')
+        elif 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+        else:
+            # Pour les queries "current", on duplique sur une période récente pour le graphique
+            today = datetime.now()
+            dates = pd.date_range(end=today, periods=30, freq='D')
+            df = pd.concat([df] * len(dates), ignore_index=True)
+            df['date'] = np.repeat(dates, len(df)//len(dates))
 
+        df = df.sort_values('date')
         return df
     except Exception as e:
         st.error(f"Erreur Dune : {e}")
