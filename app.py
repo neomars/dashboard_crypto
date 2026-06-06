@@ -2,7 +2,9 @@ import streamlit as st
 import json
 import importlib
 from datetime import datetime
-from config_manager import get_dune_api_key, save_dune_api_key, delete_dune_api_key
+from config_manager import (
+    get_dune_api_key, save_dune_api_key, delete_dune_api_key
+)
 
 # --- Chargement de la configuration ---
 def load_indicators():
@@ -63,25 +65,26 @@ if selection == "Accueil":
     st.write("## Bienvenue sur votre interface d'analyse financière.")
     st.write("Cette application permet de visualiser différents indicateurs sur les marchés crypto et financiers.")
 
-    # --- Configuration API Dune ---
+    # --- Configuration API keys ---
     st.write("### 🔑 Configuration")
+
     with st.expander("Configurer l'API Dune Analytics"):
-        st.info("Les indicateurs basés sur Dune (SOPR, Institutional Holdings) nécessitent une clé API. Vous pouvez obtenir une clé gratuite en créant un compte sur [dune.com](https://dune.com).")
+        st.info("Les indicateurs basés sur Dune (SOPR, Institutional Holdings, Long/Short + Whale Positions) nécessitent une clé API. [dune.com](https://dune.com).")
 
-        current_key = get_dune_api_key()
-        new_key = st.text_input("Clé API Dune", value=current_key, type="password")
+        current_key_dune = get_dune_api_key()
+        new_key_dune = st.text_input("Clé API Dune", value=current_key_dune, type="password", key="dune_key_input")
 
-        col_save, col_del = st.columns([1, 1])
-        with col_save:
-            if st.button("Sauvegarder la clé", use_container_width=True):
-                save_dune_api_key(new_key)
-                st.success("Clé sauvegardée !")
+        c_save, c_del = st.columns([1, 2])
+        with c_save:
+            if st.button("Sauvegarder Dune", use_container_width=True):
+                save_dune_api_key(new_key_dune)
+                st.success("Clé Dune sauvegardée !")
                 st.cache_data.clear()
                 st.rerun()
-        with col_del:
-            if st.button("Supprimer la clé", use_container_width=True):
+        with c_del:
+            if st.button("Supprimer Dune", use_container_width=True):
                 delete_dune_api_key()
-                st.warning("Clé supprimée")
+                st.warning("Clé Dune supprimée")
                 st.cache_data.clear()
                 st.rerun()
 
@@ -215,15 +218,21 @@ else:
                 module = importlib.import_module(selected_ind["module"])
                 plot_func = getattr(module, selected_ind["function"])
 
+                # Appel de la fonction de génération
                 fig = plot_func()
+
                 if fig:
+                    # Application du type d'échelle sélectionné dans la barre latérale
                     if hasattr(fig, 'update_layout'):
                         fig.update_layout(yaxis_type=yaxis_type)
+
+                    # Rendu du graphique
                     st.plotly_chart(fig, use_container_width=True)
 
+                    # Affichage de l'interprétation si disponible
                     if selected_ind.get("interpretation"):
-                        st.write(f"**Interprétation :** {selected_ind['interpretation']}")
+                        st.info(f"💡 **Interprétation :** {selected_ind['interpretation']}")
                 else:
-                    st.error("Impossible de générer le graphique.")
+                    st.error(f"Impossible de générer le graphique pour {selected_ind['name']}. Vérifiez les sources de données ou votre configuration API.")
         except Exception as e:
             st.error(f"Erreur lors du chargement de l'indicateur : {e}")
