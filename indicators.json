@@ -106,13 +106,13 @@
         "interpretation": "Au-dessus des bandes = Bull Market (Support). En-dessous des bandes = Bear Market (Résistance)."
     },
     {
-        "id": "utxo_bands",
-        "name": "UTXO Realized Cap Age Bands",
-        "icon": "📊",
-        "module": "realized_cap_utxo",
-        "function": "get_realized_cap_utxo_plot",
-        "description": "Visualisation des bandes d'âge du Realized Cap (HODL Waves en valeur réalisée) via Dune Analytics.",
+        "id": "long_short_whale",
+        "name": "Long/Short + Whale Positions",
+        "icon": "🐋",
+        "module": "long_short_whale",
+        "function": "get_long_short_whale_plot",
+        "description": "Analyse des positions Long/Short et de l'activité des baleines (Whales) via Dune Analytics.",
         "default_scale": "linear",
-        "interpretation": "Montre la répartition de la valeur détenue par différentes cohortes d'âge. Utile pour identifier les phases d'accumulation et de distribution."
+        "interpretation": "Permet de visualiser le sentiment des traders et les mouvements des gros portefeuilles sur GMX V2."
     }
 ]
