@@ -16,6 +16,8 @@ L'application propose une interface de navigation latérale pour choisir parmi l
 8.  **Volatility Compression Ratio (VCR)** : Mesure de la compression de volatilité (ratio 30j/365j) pour anticiper les mouvements explosifs.
 9.  **Bitcoin Cycle Correction Analysis** : Analyse comparative de la sévérité des corrections (>15%) pour chaque cycle de halving depuis 2010. Identifie les sommets (Tops) et les creux (Bottoms) historiques.
 10. **BTC Institutional Holding** : Visualisation de l'accumulation de Bitcoin par les institutionnels (ETFs Spot) corrélée au prix, via Dune Analytics.
+11. **Bear Market Support Band** : Indicateur de Benjamin Cowen combinant la SMA 20 semaines et l'EMA 21 semaines pour identifier les phases de marché.
+12. **Long/Short + Whale Positions** : Analyse du sentiment de marché et des positions des gros portefeuilles sur les marchés perpétuels (GMX V2) via Dune Analytics.
 
 ### Calcul du Bitcoin Cycle Correction Analysis
 
@@ -79,7 +81,7 @@ pip install -r requirements.txt
 ```
 
 ### 4. Configuration de l'API Dune
-Les indicateurs basés sur Dune Analytics (SOPR et Institutional Holding) nécessitent une clé API.
+Les indicateurs basés sur Dune Analytics (SOPR, Institutional Holding, Long/Short Whale) nécessitent une clé API.
 
 Vous pouvez configurer cette clé de deux manières :
 1.  **Via l'interface** : Dans la barre latérale, sous la section **Configuration**, dépliez "API Dune Analytics" pour saisir et sauvegarder votre clé.
@@ -114,3 +116,5 @@ L'interface s'ouvrira automatiquement dans votre navigateur par défaut (génér
 - `bmi_indicator.py` : Logique de l'indice de maturation du Bitcoin.
 - `btc_institutional.py` : Visualisation des holdings institutionnels.
 - `btc_volume.py` : Indicateur de prix et volume coloré.
+- `bmsb_indicator.py` : Bear Market Support Band (Benjamin Cowen).
+- `long_short_whale.py` : Analyse des positions Long/Short et Whale via Dune Analytics.
