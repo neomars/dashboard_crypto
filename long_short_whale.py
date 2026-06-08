@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from dune_client.client import DuneClient
+import requests
 from config_manager import get_dune_api_key
 
 # ===================== CONFIG =====================
@@ -9,33 +9,25 @@ PAIRS = ["BTC", "ETH", "SOL", "DOGE", "AVAX", "LINK"]
 QUERY_ID = 3089944   # GMX V2 Long/Short
 
 @st.cache_data(ttl=3600)
-def get_long_short_data(asset: str):
+def get_long_short_data():
     api_key = get_dune_api_key()
     if not api_key:
         return pd.DataFrame()
 
-    dune = DuneClient(api_key)
-    try:
-        # Note: dune-client might require slightly different call depending on version,
-        # but get_latest_result is standard.
-        result = dune.get_latest_result(
-            query_id=QUERY_ID,
-            parameters=[{"name": "asset", "value": asset.upper(), "type": "text"}] if hasattr(dune, "run_query") else {"asset": asset.upper()}
-        )
-        # Handle different response structures if necessary
-        rows = []
-        if hasattr(result, 'result') and hasattr(result.result, 'rows'):
-            rows = result.result.rows
-        elif isinstance(result, list):
-            rows = result
-        else:
-            # Fallback for different library versions
-            try:
-                rows = result.get_rows()
-            except:
-                rows = []
+    url = f"https://api.dune.com/api/v1/query/{QUERY_ID}/results"
+    headers = {
+        "X-Dune-API-Key": api_key,
+        "Accept-Encoding": "identity"
+    }
 
-        df = pd.DataFrame(rows)
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        if response.status_code != 200:
+            st.error(f"Erreur API Dune : {response.status_code} - {response.text}")
+            return pd.DataFrame()
+
+        data = response.json().get('result', {}).get('rows', [])
+        df = pd.DataFrame(data)
 
         if df.empty:
             return df
@@ -45,10 +37,13 @@ def get_long_short_data(asset: str):
         if date_col:
             df['date'] = pd.to_datetime(df[date_col])
             df = df.sort_values('date')
+            # Remove timezone for Plotly/Pandas compatibility
+            if df['date'].dt.tz is not None:
+                df['date'] = df['date'].dt.tz_localize(None)
 
         return df
     except Exception as e:
-        st.error(f"Erreur Dune : {e}")
+        st.error(f"Erreur lors de l'accès à Dune.com : {e}")
         return pd.DataFrame()
 
 def get_long_short_whale_plot():
@@ -66,9 +61,9 @@ def get_long_short_whale_plot():
 
         show_whales = st.checkbox("Afficher positions des gros wallets (Whales)", value=False)
 
-    df = get_long_short_data(selected_pair)
+    df_full = get_long_short_data()
 
-    if df.empty:
+    if df_full.empty:
         api_key = get_dune_api_key()
         if not api_key:
             st.warning("Clé API Dune manquante dans la configuration (Accueil).")
@@ -76,14 +71,32 @@ def get_long_short_whale_plot():
             st.warning("Aucune donnée retournée par Dune. Vérifiez votre Query ID ou vos paramètres.")
         return None
 
+    # Filtrage par paire (Asset) - Recherche d'une colonne de symbole
+    asset_col = next((c for c in df_full.columns if c.lower() in ['asset', 'symbol', 'pair', 'market']), None)
+    if asset_col:
+        df = df_full[df_full[asset_col].astype(str).str.upper().str.contains(selected_pair.upper())].copy()
+    else:
+        # Si pas de colonne asset, on suppose que le query est filtré ou on prend tout
+        df = df_full.copy()
+
+    if df.empty:
+        st.warning(f"Aucune donnée trouvée pour la paire {selected_pair}.")
+        return None
+
     # ===================== DÉTECTION COLONNES =====================
-    long_col = next((c for c in df.columns if 'long' in c.lower() and ('oi' in c.lower() or 'position' in c.lower())), None)
-    short_col = next((c for c in df.columns if 'short' in c.lower() and ('oi' in c.lower() or 'position' in c.lower())), None)
+    # On cherche les colonnes qui contiennent 'long' et 'oi' ou 'position'
+    long_col = next((c for c in df.columns if 'long' in c.lower() and ('oi' in c.lower() or 'position' in c.lower() or 'size' in c.lower())), None)
+    short_col = next((c for c in df.columns if 'short' in c.lower() and ('oi' in c.lower() or 'position' in c.lower() or 'size' in c.lower())), None)
 
     if not long_col or not short_col:
         st.error("Colonnes Long/Short introuvables dans les données Dune.")
         st.write("Colonnes disponibles :", list(df.columns))
         return None
+
+    # Conversion en numérique
+    df[long_col] = pd.to_numeric(df[long_col], errors='coerce')
+    df[short_col] = pd.to_numeric(df[short_col], errors='coerce')
+    df = df.dropna(subset=[long_col, short_col])
 
     fig = go.Figure()
     title = ""
@@ -143,9 +156,9 @@ def get_long_short_whale_plot():
         whale_short_col = next((c for c in df.columns if 'whale' in c.lower() and 'short' in c.lower()), None)
 
         if whale_long_col and whale_short_col:
-            # On ajoute ces traces au même graphique ou on pourrait en créer un autre.
-            # L'utilisateur semble vouloir les ajouter si possible.
-            # Mais attention à l'échelle. Pour l'instant, ajoutons les en pointillés.
+            df[whale_long_col] = pd.to_numeric(df[whale_long_col], errors='coerce')
+            df[whale_short_col] = pd.to_numeric(df[whale_short_col], errors='coerce')
+
             fig.add_trace(go.Scatter(
                 x=df['date'], y=df[whale_long_col],
                 name="Whale Long", line=dict(color="#00C853", dash='dash', width=1.5)
@@ -155,10 +168,10 @@ def get_long_short_whale_plot():
                 name="Whale Short", line=dict(color="#FF1744", dash='dash', width=1.5)
             ))
         else:
-            st.info("Colonnes 'whale' non trouvées dans la query Dune.")
+            st.info("Données 'Whale' non disponibles pour cette paire dans le dataset actuel.")
 
     return fig
 
 if __name__ == "__main__":
     # Test simple
-    print("Module Long/Short Whale chargé.")
+    print("Module Long/Short Whale chargé (Requests version).")
