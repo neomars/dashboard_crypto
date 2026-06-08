@@ -69,7 +69,7 @@ if selection == "Accueil":
     st.write("### 🔑 Configuration")
 
     with st.expander("Configurer l'API Dune Analytics"):
-        st.info("Les indicateurs basés sur Dune (SOPR, Institutional Holdings, Long/Short + Whale Positions) nécessitent une clé API. [dune.com](https://dune.com).")
+        st.info("Les indicateurs basés sur Dune (SOPR, Institutional Holdings, Long/Short Positions) nécessitent une clé API. [dune.com](https://dune.com).")
 
         current_key_dune = get_dune_api_key()
         new_key_dune = st.text_input("Clé API Dune", value=current_key_dune, type="password", key="dune_key_input")

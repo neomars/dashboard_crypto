@@ -106,13 +106,13 @@
         "interpretation": "Au-dessus des bandes = Bull Market (Support). En-dessous des bandes = Bear Market (Résistance)."
     },
     {
-        "id": "long_short_whale",
-        "name": "Long/Short + Whale Positions",
-        "icon": "🐋",
+        "id": "long_short",
+        "name": "Long/Short Positions (GMX V2)",
+        "icon": "📊",
         "module": "long_short_whale",
-        "function": "get_long_short_whale_plot",
-        "description": "Analyse des positions Long/Short et de l'activité des baleines (Whales) via Dune Analytics.",
+        "function": "get_long_short_plot",
+        "description": "Analyse des positions Long/Short sur les marchés perpétuels GMX V2 via Dune Analytics.",
         "default_scale": "linear",
-        "interpretation": "Permet de visualiser le sentiment des traders et les mouvements des gros portefeuilles sur GMX V2."
+        "interpretation": "Permet de visualiser le sentiment des traders (OI Long vs Short) avec superposition du prix de l'asset."
     }
 ]

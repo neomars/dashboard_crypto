@@ -17,7 +17,7 @@ L'application propose une interface de navigation latérale pour choisir parmi l
 9.  **Bitcoin Cycle Correction Analysis** : Analyse comparative de la sévérité des corrections (>15%) pour chaque cycle de halving depuis 2010. Identifie les sommets (Tops) et les creux (Bottoms) historiques.
 10. **BTC Institutional Holding** : Visualisation de l'accumulation de Bitcoin par les institutionnels (ETFs Spot) corrélée au prix, via Dune Analytics.
 11. **Bear Market Support Band** : Indicateur de Benjamin Cowen combinant la SMA 20 semaines et l'EMA 21 semaines pour identifier les phases de marché.
-12. **Long/Short + Whale Positions** : Analyse du sentiment de marché et des positions des gros portefeuilles sur les marchés perpétuels (GMX V2) via Dune Analytics.
+12. **Long/Short Positions (GMX V2)** : Analyse du sentiment de marché (Open Interest Long vs Short) sur les marchés perpétuels via Dune Analytics.
 
 ### Calcul du Bitcoin Cycle Correction Analysis
 
@@ -117,4 +117,4 @@ L'interface s'ouvrira automatiquement dans votre navigateur par défaut (génér
 - `btc_institutional.py` : Visualisation des holdings institutionnels.
 - `btc_volume.py` : Indicateur de prix et volume coloré.
 - `bmsb_indicator.py` : Bear Market Support Band (Benjamin Cowen).
-- `long_short_whale.py` : Analyse des positions Long/Short et Whale via Dune Analytics.
+- `long_short_whale.py` : Analyse des positions Long/Short sur GMX V2 via Dune Analytics.
