@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import requests
+import yfinance as yf
 from config_manager import get_dune_api_key
 
 # ===================== CONFIG =====================
@@ -71,12 +72,11 @@ def get_long_short_whale_plot():
             st.warning("Aucune donnée retournée par Dune. Vérifiez votre Query ID ou vos paramètres.")
         return None
 
-    # Filtrage par paire (Asset) - Recherche d'une colonne de symbole
+    # Filtrage par paire (Asset)
     asset_col = next((c for c in df_full.columns if c.lower() in ['asset', 'symbol', 'pair', 'market']), None)
     if asset_col:
         df = df_full[df_full[asset_col].astype(str).str.upper().str.contains(selected_pair.upper())].copy()
     else:
-        # Si pas de colonne asset, on suppose que le query est filtré ou on prend tout
         df = df_full.copy()
 
     if df.empty:
@@ -84,13 +84,11 @@ def get_long_short_whale_plot():
         return None
 
     # ===================== DÉTECTION COLONNES =====================
-    # On cherche les colonnes qui contiennent 'long' et 'oi' ou 'position'
     long_col = next((c for c in df.columns if 'long' in c.lower() and ('oi' in c.lower() or 'position' in c.lower() or 'size' in c.lower())), None)
     short_col = next((c for c in df.columns if 'short' in c.lower() and ('oi' in c.lower() or 'position' in c.lower() or 'size' in c.lower())), None)
 
     if not long_col or not short_col:
         st.error("Colonnes Long/Short introuvables dans les données Dune.")
-        st.write("Colonnes disponibles :", list(df.columns))
         return None
 
     # Conversion en numérique
@@ -98,10 +96,37 @@ def get_long_short_whale_plot():
     df[short_col] = pd.to_numeric(df[short_col], errors='coerce')
     df = df.dropna(subset=[long_col, short_col])
 
+    # ===================== PRIX DE L'ASSET (YFINANCE) =====================
+    ticker = f"{selected_pair}-USD"
+    min_date = df['date'].min().strftime('%Y-%m-%d')
+    price_data = yf.download(ticker, start=min_date, progress=False)
+
+    if not price_data.empty:
+        if isinstance(price_data.columns, pd.MultiIndex):
+            price_close = price_data['Close'][ticker]
+        else:
+            price_close = price_data['Close']
+
+        price_df = pd.DataFrame({'price_date': price_data.index, 'Asset_Price': price_close.values})
+        price_df['price_date'] = pd.to_datetime(price_df['price_date']).dt.tz_localize(None)
+
+        # Normalisation pour le merge (date-to-date)
+        df['date_only'] = df['date'].dt.normalize()
+        price_df['price_date_only'] = price_df['price_date'].dt.normalize()
+
+        # Merge sur la date normalisée (en enlevant les doublons potentiels de prix)
+        price_df = price_df.drop_duplicates('price_date_only')
+        df = pd.merge(df, price_df[['price_date_only', 'Asset_Price']],
+                     left_on='date_only', right_on='price_date_only', how='left')
+
+        # Interpolation pour combler les trous (weekends ou points intra-day sans match direct)
+        df['Asset_Price'] = df['Asset_Price'].ffill()
+
+    # ===================== GRAPHIQUE =====================
     fig = go.Figure()
     title = ""
 
-    # ===================== MODE 1: Long vs Short =====================
+    # Mode 1: Long vs Short
     if mode == "Long vs Short":
         fig.add_trace(go.Scatter(
             x=df['date'], y=df[long_col],
@@ -113,9 +138,8 @@ def get_long_short_whale_plot():
         ))
         title = f"Long vs Short Open Interest - {selected_pair}"
 
-    # ===================== MODE 2: Ratio =====================
+    # Mode 2: Ratio
     elif mode == "Ratio Long/Short":
-        # Eviter division par zéro
         df['ratio'] = df[long_col] / df[short_col].replace(0, float('nan'))
         fig.add_trace(go.Scatter(
             x=df['date'], y=df['ratio'],
@@ -124,7 +148,7 @@ def get_long_short_whale_plot():
         fig.add_hline(y=1.0, line_dash="dash", line_color="white", annotation_text="Équilibre (1.0)")
         title = f"Long/Short Ratio - {selected_pair}"
 
-    # ===================== MODE 3: Open Interest Cumulé =====================
+    # Mode 3: Open Interest Cumulé
     else:
         df['cum_long'] = df[long_col].cumsum()
         df['cum_short'] = df[short_col].cumsum()
@@ -141,16 +165,16 @@ def get_long_short_whale_plot():
         ))
         title = f"Open Interest Cumulé - {selected_pair}"
 
-    fig.update_layout(
-        title=title,
-        height=650,
-        template="plotly_dark",
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(t=60, b=100)
-    )
+    # Superposition du prix
+    if 'Asset_Price' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df['date'], y=df['Asset_Price'],
+            name=f"Prix {selected_pair}",
+            line=dict(color='#00CCFF', width=1.5, dash='dot'),
+            yaxis="y2"
+        ))
 
-    # ===================== SECTION WHALES =====================
+    # Section Whales
     if show_whales:
         whale_long_col = next((c for c in df.columns if 'whale' in c.lower() and 'long' in c.lower()), None)
         whale_short_col = next((c for c in df.columns if 'whale' in c.lower() and 'short' in c.lower()), None)
@@ -170,8 +194,23 @@ def get_long_short_whale_plot():
         else:
             st.info("Données 'Whale' non disponibles pour cette paire dans le dataset actuel.")
 
+    fig.update_layout(
+        title=title,
+        height=650,
+        template="plotly_dark",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis=dict(title="Open Interest / Ratio", side="left"),
+        yaxis2=dict(
+            title=f"Prix {selected_pair} (USD)",
+            overlaying="y",
+            side="right",
+            showgrid=False
+        ),
+        margin=dict(t=60, b=100)
+    )
+
     return fig
 
 if __name__ == "__main__":
-    # Test simple
-    print("Module Long/Short Whale chargé (Requests version).")
+    print("Module Long/Short Whale chargé avec superposition de prix et merge robuste.")
