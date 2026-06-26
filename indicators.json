@@ -114,5 +114,15 @@
         "description": "Analyse des positions Long/Short sur les marchés perpétuels GMX V2 via Dune Analytics.",
         "default_scale": "linear",
         "interpretation": "Permet de visualiser le sentiment des traders (OI Long vs Short) avec superposition du prix de l'asset."
+    },
+    {
+        "id": "cycle_roi",
+        "name": "Bitcoin Market Cycle ROI",
+        "icon": "📈",
+        "module": "cycle_roi_indicator",
+        "function": "get_cycle_roi_plot",
+        "description": "Compare la performance du Bitcoin (ROI) depuis les différents points bas (bottoms) de cycle.",
+        "default_scale": "logarithmique",
+        "interpretation": "Superpose les trajectoires de prix depuis chaque bottom majeur pour comparer la vitesse et l'amplitude de la reprise."
     }
 ]
