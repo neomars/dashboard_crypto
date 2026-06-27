@@ -96,9 +96,16 @@ Vous pouvez configurer cette clé de deux manières :
 
 ## Utilisation
 
-Pour lancer l'application, exécutez la commande suivante :
-
+### Lancement automatique (Recommandé)
+Un script de lancement est disponible pour activer l'environnement et lancer l'application d'un coup :
 ```bash
+./start_app.sh
+```
+
+### Lancement manuel
+Si vous préférez lancer l'application manuellement :
+```bash
+source btc_env/bin/activate
 streamlit run app.py
 ```
 
