@@ -121,8 +121,8 @@
         "icon": "📈",
         "module": "cycle_roi_indicator",
         "function": "get_cycle_roi_plot",
-        "description": "Compare la performance du Bitcoin (ROI) depuis les différents points bas (bottoms) de cycle.",
+        "description": "Compare la performance du Bitcoin (ROI) depuis les différents sommets (tops) de cycle.",
         "default_scale": "logarithmique",
-        "interpretation": "Superpose les trajectoires de prix depuis chaque bottom majeur pour comparer la vitesse et l'amplitude de la reprise."
+        "interpretation": "Superpose les trajectoires de prix depuis chaque top majeur pour comparer la sévérité et la durée des corrections de cycle."
     }
 ]
