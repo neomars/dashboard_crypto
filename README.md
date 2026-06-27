@@ -16,6 +16,9 @@ L'application propose une interface de navigation latérale pour choisir parmi l
 8.  **Volatility Compression Ratio (VCR)** : Mesure de la compression de volatilité (ratio 30j/365j) pour anticiper les mouvements explosifs.
 9.  **Bitcoin Cycle Correction Analysis** : Analyse comparative de la sévérité des corrections (>15%) pour chaque cycle de halving depuis 2010. Identifie les sommets (Tops) et les creux (Bottoms) historiques.
 10. **BTC Institutional Holding** : Visualisation de l'accumulation de Bitcoin par les institutionnels (ETFs Spot) corrélée au prix, via Dune Analytics.
+11. **Bear Market Support Band** : Indicateur de Benjamin Cowen combinant la SMA 20 semaines et l'EMA 21 semaines pour identifier les phases de marché.
+12. **Long/Short Positions (GMX V2)** : Analyse du sentiment de marché (Open Interest Long vs Short) sur les marchés perpétuels via Dune Analytics.
+13. **Bitcoin Market Cycle ROI** : Comparaison de la performance du Bitcoin (ROI) depuis les différents sommets (tops) de cycle historiques.
 
 ### Calcul du Bitcoin Cycle Correction Analysis
 
@@ -79,7 +82,7 @@ pip install -r requirements.txt
 ```
 
 ### 4. Configuration de l'API Dune
-Les indicateurs basés sur Dune Analytics (SOPR et Institutional Holding) nécessitent une clé API.
+Les indicateurs basés sur Dune Analytics (SOPR, Institutional Holding, Long/Short Whale) nécessitent une clé API.
 
 Vous pouvez configurer cette clé de deux manières :
 1.  **Via l'interface** : Dans la barre latérale, sous la section **Configuration**, dépliez "API Dune Analytics" pour saisir et sauvegarder votre clé.
@@ -93,9 +96,16 @@ Vous pouvez configurer cette clé de deux manières :
 
 ## Utilisation
 
-Pour lancer l'application, exécutez la commande suivante :
-
+### Lancement automatique (Recommandé)
+Un script de lancement est disponible pour activer l'environnement et lancer l'application d'un coup :
 ```bash
+./start_app.sh
+```
+
+### Lancement manuel
+Si vous préférez lancer l'application manuellement :
+```bash
+source btc_env/bin/activate
 streamlit run app.py
 ```
 
@@ -114,3 +124,6 @@ L'interface s'ouvrira automatiquement dans votre navigateur par défaut (génér
 - `bmi_indicator.py` : Logique de l'indice de maturation du Bitcoin.
 - `btc_institutional.py` : Visualisation des holdings institutionnels.
 - `btc_volume.py` : Indicateur de prix et volume coloré.
+- `bmsb_indicator.py` : Bear Market Support Band (Benjamin Cowen).
+- `long_short_whale.py` : Analyse des positions Long/Short sur GMX V2 via Dune Analytics.
+- `cycle_roi_indicator.py` : Comparaison des trajectoires de ROI post-top de cycle.
