@@ -1,39 +1,23 @@
 import pandas as pd
-import yfinance as yf
-import requests
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import timedelta
 import streamlit as st
 import warnings
+
+from data_provider import KNOWN_HALVINGS, estimate_next_halving, get_ticker_history
 
 warnings.filterwarnings("ignore")
 
 @st.cache_data(ttl=3600)
 def get_btc_halving_plot():
-    # ====================== Halvings connus ======================
-    known_halvings = [
-        {"date": "2012-11-28", "block": 210000,  "reward": "50 → 25"},
-        {"date": "2016-07-09", "block": 420000,  "reward": "25 → 12.5"},
-        {"date": "2020-05-11", "block": 630000,  "reward": "12.5 → 6.25"},
-        {"date": "2024-04-20", "block": 840000,  "reward": "6.25 → 3.125"}
-    ]
-    halving_dates = [pd.to_datetime(h["date"]) for h in known_halvings]
-
-    # ====================== Prochain halving ======================
-    try:
-        current_block = int(requests.get("https://mempool.space/api/blocks/tip/height", timeout=10).text.strip())
-    except:
-        current_block = 840000
-
-    block_interval = 210000
-    next_halving_block = ((current_block // block_interval) + 1) * block_interval
-    blocks_to_next = next_halving_block - current_block
-    estimated_date = datetime.now() + timedelta(days=(blocks_to_next * 10) / (60 * 24))
-
+    halving_dates = [pd.to_datetime(h["date"]) for h in KNOWN_HALVINGS]
+    estimated_date = estimate_next_halving()
     all_halvings = halving_dates + [pd.to_datetime(estimated_date)]
 
     # ====================== BTC Price ======================
-    btc = yf.download('BTC-USD', start='2010-01-01', interval='1d', progress=False)
+    btc = get_ticker_history('BTC-USD', start='2010-01-01')
+    if btc.empty:
+        return None
     btc = btc[['Close']].reset_index()
     btc.columns = ['timestamp', 'close']
 
@@ -92,7 +76,7 @@ def get_btc_halving_plot():
     ))
 
     # Halvings historiques
-    for h in known_halvings:
+    for h in KNOWN_HALVINGS:
         date = pd.to_datetime(h["date"])
         if date >= btc['timestamp'].min():
             fig.add_shape(

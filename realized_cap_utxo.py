@@ -5,12 +5,14 @@ import streamlit as st
 from datetime import datetime
 import numpy as np
 import time
-from config_manager import get_dune_api_key
+from config_manager import get_dune_api_key, get_dune_query_id
 
 @st.cache_data(ttl=7200)  # Cache 2 heures (adapté au tier gratuit)
 def get_dune_utxo_realized_cap():
     """Récupère les données UTXO Age Bands depuis Dune Analytics"""
-    query_id = 7611528  # Query légère : Bitcoin UTXO Age Bands (mensuelle) - https://dune.com/queries/7611528
+    # Query légère : Bitcoin UTXO Age Bands (mensuelle) - https://dune.com/queries/7611528
+    # Surchargable via DUNE_QUERY_REALIZED_CAP_UTXO ou config.ini [DUNE_QUERIES]
+    query_id = get_dune_query_id('realized_cap_utxo', 7611528)
 
     api_key = get_dune_api_key()
     if not api_key:

@@ -1,47 +1,23 @@
 import pandas as pd
-import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from configparser import ConfigParser
-import requests
 import streamlit as st
-from datetime import datetime
+
+from config_manager import get_dune_query_id
+from data_provider import get_dune_query_results, get_ticker_history
+
+QUERY_ID = get_dune_query_id('institutional', '3382000')  # surchargable via DUNE_QUERY_INSTITUTIONAL ou config.ini [DUNE_QUERIES]
 
 @st.cache_data(ttl=3600)
 def get_institutional_plot():
-    # ====================== Configuration ======================
-    config = ConfigParser()
-    config.read('config.ini')
-    try:
-        DUNE_API_KEY = config['DUNE']['api_key'].strip().strip('"').strip("'")
-    except KeyError:
-        st.error("Clé API Dune manquante dans config.ini")
-        return None
-
     # ====================== Query Dune ======================
-    QUERY_ID = "3382000"
-
-    url = f"https://api.dune.com/api/v1/query/{QUERY_ID}/results"
-    headers = {
-        "X-Dune-API-Key": DUNE_API_KEY,
-        "Accept-Encoding": "identity"
-    }
-
-    try:
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code != 200:
-            st.error(f"Erreur Dune API : {response.status_code}. Vérifiez votre clé API et l'ID de requête ({QUERY_ID}).")
-            return None
-        data = response.json()['result']['rows']
-    except Exception as e:
-        st.error(f"Erreur lors de la récupération des données Dune : {e}")
+    df_raw, error = get_dune_query_results(QUERY_ID)
+    if error:
+        st.error(error)
         return None
-
-    if not data:
+    if df_raw is None or df_raw.empty:
         st.warning("Aucune donnée retournée par la requête Dune.")
         return None
-
-    df_raw = pd.DataFrame(data)
 
     # Identification des colonnes
     time_col = next((c for c in ['time', 'date', 'block_time', 'day'] if c in df_raw.columns), None)
@@ -63,17 +39,13 @@ def get_institutional_plot():
 
     # ====================== BTC Price ======================
     min_date = df_pivot.index.min().strftime('%Y-%m-%d')
-    btc = yf.download('BTC-USD', start=min_date, interval='1d', progress=False)
+    btc = get_ticker_history('BTC-USD', start=min_date)
 
     if btc.empty:
         st.error("Impossible de récupérer les prix BTC via yfinance.")
         return None
 
-    if isinstance(btc.columns, pd.MultiIndex):
-        close_prices = btc['Close']['BTC-USD']
-    else:
-        close_prices = btc['Close']
-
+    close_prices = btc['Close']
     btc_df = pd.DataFrame({'date_merge': btc.index, 'BTC_Price': close_prices.values})
     btc_df['date_merge'] = pd.to_datetime(btc_df['date_merge']).dt.tz_localize(None)
 

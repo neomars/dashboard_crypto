@@ -1,8 +1,9 @@
 import pandas as pd
-import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
+
+from data_provider import get_ticker_history
 
 @st.cache_data(ttl=3600)
 def fetch_bmsb_data():
@@ -10,13 +11,9 @@ def fetch_bmsb_data():
     Récupère les données hebdomadaires du Bitcoin via Yahoo Finance.
     """
     # On commence en 2010 pour avoir l'historique complet
-    btc = yf.download('BTC-USD', start='2010-01-01', interval='1wk', progress=False)
+    btc = get_ticker_history('BTC-USD', start='2010-01-01', interval='1wk')
     if btc.empty:
         return None
-
-    # Nettoyage des colonnes (yfinance peut renvoyer un MultiIndex)
-    if isinstance(btc.columns, pd.MultiIndex):
-        btc.columns = btc.columns.get_level_values(0)
 
     # Reset index pour avoir la date en colonne
     btc = btc.reset_index()

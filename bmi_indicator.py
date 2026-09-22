@@ -3,46 +3,8 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
-import requests
-from io import StringIO
-import yfinance as yf
-from datetime import datetime
 
-@st.cache_data(ttl=86400)
-def fetch_combined_btc_data():
-    # ====================== 1. Données anciennes (2010-2018) ======================
-    url = "https://raw.githubusercontent.com/Yrzxiong/Bitcoin-Dataset/master/bitcoin_dataset.csv"
-    try:
-        response = requests.get(url, timeout=10)
-        btc_old = pd.read_csv(StringIO(response.text))
-        btc_old['date'] = pd.to_datetime(btc_old['Date'])
-        btc_old['close'] = pd.to_numeric(btc_old['btc_market_price'], errors='coerce')
-        btc_old = btc_old[['date', 'close']].dropna().sort_values('date').reset_index(drop=True)
-    except Exception as e:
-        st.error(f"Erreur lors du téléchargement des données historiques : {e}")
-        btc_old = pd.DataFrame(columns=['date', 'close'])
-
-    # ====================== 2. Données récentes ======================
-    btc_new = yf.download('BTC-USD', start='2018-01-01', interval='1d', progress=False)
-    if not btc_new.empty:
-        if isinstance(btc_new.columns, pd.MultiIndex):
-            btc_new = pd.DataFrame({'close': btc_new['Close']['BTC-USD']})
-        else:
-            btc_new = btc_new[['Close']]
-            btc_new.columns = ['close']
-        btc_new = btc_new.reset_index()
-        btc_new.columns = ['date', 'close']
-    else:
-        btc_new = pd.DataFrame(columns=['date', 'close'])
-
-    # ====================== 3. Fusion ======================
-    btc = pd.concat([btc_old, btc_new], ignore_index=True)
-    btc = btc.drop_duplicates(subset='date').sort_values('date').reset_index(drop=True)
-
-    # Filtrer les prix <= 0 pour éviter les problèmes d'échelle logarithmique
-    btc = btc[btc['close'] > 0].reset_index(drop=True)
-
-    return btc
+from data_provider import get_combined_btc_history
 
 def find_corrections(df, min_drop=-15):
     corrections = []
@@ -59,7 +21,7 @@ def find_corrections(df, min_drop=-15):
     return corrections
 
 def get_bmi_plot():
-    btc = fetch_combined_btc_data()
+    btc = get_combined_btc_history()
     if btc.empty:
         return None
 

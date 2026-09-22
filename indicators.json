@@ -124,5 +124,15 @@
         "description": "Compare la performance du Bitcoin (ROI) depuis les différents sommets (tops) de cycle.",
         "default_scale": "logarithmique",
         "interpretation": "Superpose les trajectoires de prix depuis chaque top majeur pour comparer la sévérité et la durée des corrections de cycle."
+    },
+    {
+        "id": "realized_cap_utxo",
+        "name": "Realized Cap - UTXO Age Bands",
+        "icon": "🗓️",
+        "module": "realized_cap_utxo",
+        "function": "get_realized_cap_utxo_plot",
+        "description": "Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge) via Dune Analytics.",
+        "default_scale": "linear",
+        "interpretation": "Une part croissante des bandes longues (2y+) reflète l'accumulation par les détenteurs de long terme (HODLers)."
     }
 ]

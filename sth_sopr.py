@@ -1,59 +1,23 @@
 import pandas as pd
-import requests
 import plotly.graph_objects as go
-from configparser import ConfigParser
-import yfinance as yf
 import streamlit as st
-from datetime import datetime
+
+from config_manager import get_dune_query_id
+from data_provider import get_dune_query_results, get_ticker_history
+
+QUERY_ID = get_dune_query_id('sopr', '6764134')  # ID fixe pour LTH/STH SOPR (surchargable via DUNE_QUERY_SOPR ou config.ini [DUNE_QUERIES])
 
 @st.cache_data(ttl=3600)
 def get_sth_sopr_plot():
-    # ====================== Configuration ======================
-    config = ConfigParser()
-    config.read('config.ini')
-
-    try:
-        DUNE_API_KEY = config['DUNE']['api_key'].strip().strip('"').strip("'")
-    except KeyError:
-        st.error("Clé API Dune manquante dans config.ini")
-        return None
-
     # ====================== Requête Dune - SOPR ======================
-    QUERY_ID = "6764134" # ID fixe pour LTH/STH SOPR
-    url = f"https://api.dune.com/api/v1/query/{QUERY_ID}/results"
-    headers = {
-        "X-Dune-API-Key": DUNE_API_KEY,
-        "Accept-Encoding": "identity" # Désactive gzip pour éviter les erreurs de décodage
-    }
-
-    try:
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code == 401:
-            st.error("Erreur API Dune : 401 (Non autorisé). Veuillez vérifier que vous avez remplacé 'VOTRE_CLE_API_ICI' par une clé API valide dans le fichier config.ini.")
-            return None
-        elif response.status_code == 404:
-            st.error(f"Erreur API Dune : 404 (Non trouvé). La requête avec l'ID {QUERY_ID} n'existe pas ou est privée.")
-            return None
-        elif response.status_code == 400:
-            try:
-                err_msg = response.json().get('error', response.text)
-            except:
-                err_msg = response.text
-            st.error(f"Erreur API Dune : 400 (Requête invalide). Détails : {err_msg}")
-            return None
-        elif response.status_code != 200:
-            st.error(f"Erreur API Dune : {response.status_code}")
-            return None
-
-        data = response.json()['result']['rows']
-    except requests.exceptions.RequestException as e:
-        st.error(f"Erreur de connexion à l'API Dune : {e}")
+    df, error = get_dune_query_results(QUERY_ID)
+    if error:
+        st.error(error)
         return None
-    except Exception as e:
-        st.error(f"Erreur lors du traitement des données Dune : {e}")
+    if df is None or df.empty:
+        st.warning("Aucune donnée retournée par la requête Dune.")
         return None
 
-    df = pd.DataFrame(data)
     # Identification de la colonne temporelle
     time_col = None
     for c in ['time', 'block_time', 'date', 'day']:
@@ -76,13 +40,12 @@ def get_sth_sopr_plot():
 
     # ====================== BTC Price ======================
     min_date = df[time_col].min().strftime('%Y-%m-%d')
-    btc = yf.download('BTC-USD', start=min_date, interval='1d', progress=False)
+    btc = get_ticker_history('BTC-USD', start=min_date)
+    if btc.empty:
+        st.error("Impossible de récupérer les prix BTC via yfinance.")
+        return None
 
-    if isinstance(btc.columns, pd.MultiIndex):
-        close_prices = btc['Close']['BTC-USD']
-    else:
-        close_prices = btc['Close']
-
+    close_prices = btc['Close']
     btc_df = pd.DataFrame({'time_merge': btc.index, 'BTC_Price': close_prices.values})
     btc_df['time_merge'] = pd.to_datetime(btc_df['time_merge']).dt.tz_localize(None)
     df[time_col] = df[time_col].dt.tz_localize(None)

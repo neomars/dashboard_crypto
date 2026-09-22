@@ -1,52 +1,32 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import requests
-import yfinance as yf
-from config_manager import get_dune_api_key
+from config_manager import get_dune_api_key, get_dune_query_id
+from data_provider import get_dune_query_results, get_ticker_history
 
 # ===================== CONFIG =====================
 PAIRS = ["BTC", "ETH", "SOL", "DOGE", "AVAX", "LINK"]
-QUERY_ID = 3089944   # GMX V2 Long/Short
+QUERY_ID = get_dune_query_id('long_short', 3089944)  # GMX V2 Long/Short (surchargable via DUNE_QUERY_LONG_SHORT ou config.ini [DUNE_QUERIES])
 
 @st.cache_data(ttl=3600)
 def get_long_short_data():
     """Récupère les données brutes depuis Dune Analytics"""
-    api_key = get_dune_api_key()
-    if not api_key:
+    df, error = get_dune_query_results(QUERY_ID)
+    if error:
+        st.error(error)
+        return pd.DataFrame()
+    if df is None or df.empty:
         return pd.DataFrame()
 
-    # On récupère les derniers résultats de la query
-    url = f"https://api.dune.com/api/v1/query/{QUERY_ID}/results"
-    headers = {
-        "X-Dune-API-Key": api_key,
-        "Accept-Encoding": "identity"
-    }
+    # Detection des colonnes de date
+    date_col = next((c for c in df.columns if c.lower() in ['date', 'block_time', 'time']), None)
+    if date_col:
+        df['date'] = pd.to_datetime(df[date_col])
+        df = df.sort_values('date')
+        if df['date'].dt.tz is not None:
+            df['date'] = df['date'].dt.tz_localize(None)
 
-    try:
-        response = requests.get(url, headers=headers, timeout=20)
-        if response.status_code != 200:
-            st.error(f"Erreur API Dune : {response.status_code} - {response.text}")
-            return pd.DataFrame()
-
-        data = response.json().get('result', {}).get('rows', [])
-        df = pd.DataFrame(data)
-
-        if df.empty:
-            return df
-
-        # Detection des colonnes de date
-        date_col = next((c for c in df.columns if c.lower() in ['date', 'block_time', 'time']), None)
-        if date_col:
-            df['date'] = pd.to_datetime(df[date_col])
-            df = df.sort_values('date')
-            if df['date'].dt.tz is not None:
-                df['date'] = df['date'].dt.tz_localize(None)
-
-        return df
-    except Exception as e:
-        st.error(f"Erreur lors de l'accès à Dune.com : {e}")
-        return pd.DataFrame()
+    return df
 
 def get_long_short_plot():
     """Fonction principale pour Streamlit"""
@@ -105,13 +85,10 @@ def get_long_short_plot():
     # ===================== PRIX DE L'ASSET (YFINANCE) =====================
     ticker = f"{selected_pair}-USD"
     min_date = df['date'].min().strftime('%Y-%m-%d')
-    price_data = yf.download(ticker, start=min_date, progress=False)
+    price_data = get_ticker_history(ticker, start=min_date)
 
     if not price_data.empty:
-        if isinstance(price_data.columns, pd.MultiIndex):
-            price_close = price_data['Close'][ticker]
-        else:
-            price_close = price_data['Close']
+        price_close = price_data['Close']
 
         price_df = pd.DataFrame({'price_date': price_data.index, 'Asset_Price': price_close.values})
         price_df['price_date'] = pd.to_datetime(price_df['price_date']).dt.tz_localize(None)

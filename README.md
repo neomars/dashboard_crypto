@@ -19,6 +19,7 @@ L'application propose une interface de navigation latérale pour choisir parmi l
 11. **Bear Market Support Band** : Indicateur de Benjamin Cowen combinant la SMA 20 semaines et l'EMA 21 semaines pour identifier les phases de marché.
 12. **Long/Short Positions (GMX V2)** : Analyse du sentiment de marché (Open Interest Long vs Short) sur les marchés perpétuels via Dune Analytics.
 13. **Bitcoin Market Cycle ROI** : Comparaison de la performance du Bitcoin (ROI) depuis les différents sommets (tops) de cycle historiques.
+14. **Realized Cap - UTXO Age Bands** : Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge, de moins d'un jour à plus de 10 ans) via Dune Analytics.
 
 ### Calcul du Bitcoin Cycle Correction Analysis
 
@@ -94,6 +95,21 @@ Vous pouvez configurer cette clé de deux manières :
 
 *Note : Vous pouvez obtenir une clé gratuite sur [dune.com](https://dune.com). Le fichier `config.ini` est ignoré par git pour protéger votre clé.*
 
+### 5. Configuration avancée : IDs des requêtes Dune
+
+Les IDs des requêtes Dune (SOPR, Institutional Holding, Long/Short, Realized Cap UTXO) ont des valeurs par défaut codées en dur, mais sont surchargeables sans modifier le code, par ordre de priorité :
+
+1. Variable d'environnement `DUNE_QUERY_<NOM>` (ex : `DUNE_QUERY_SOPR=1234567`)
+2. Section `[DUNE_QUERIES]` du fichier `config.ini` :
+   ```ini
+   [DUNE_QUERIES]
+   sopr = 1234567
+   institutional = 2345678
+   long_short = 3456789
+   realized_cap_utxo = 4567890
+   ```
+3. Valeur par défaut intégrée au code.
+
 ## Utilisation
 
 ### Lancement automatique (Recommandé)
@@ -111,9 +127,20 @@ streamlit run app.py
 
 L'interface s'ouvrira automatiquement dans votre navigateur par défaut (généralement à l'adresse `http://localhost:8501`).
 
+## Tests
+
+Le projet inclut une suite de tests unitaires (`pytest`) couvrant la logique de calcul pure (simulateur de levier, détection de corrections BMI, régime BMSB, volatilité VCR, gestion d'erreurs Dune).
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
 ## Structure du Projet
 
 - `app.py` : Point d'entrée principal de l'application Streamlit.
+- `data_provider.py` : Fonctions partagées d'accès aux données (Yahoo Finance, Dune Analytics, historique BTC combiné, estimation du prochain halving) — centralise la logique commune à la majorité des indicateurs.
+- `config_manager.py` : Lecture/écriture de `config.ini` (clé API Dune, IDs de requêtes Dune configurables).
 - `btc_fear_greed.py` : Logique de l'indicateur Fear & Greed.
 - `btc_halving.py` : Analyse des cycles de halving.
 - `onchain_indicator.py` : Métriques On-chain (SMA 200, Pi Cycle, etc.).
@@ -127,3 +154,5 @@ L'interface s'ouvrira automatiquement dans votre navigateur par défaut (génér
 - `bmsb_indicator.py` : Bear Market Support Band (Benjamin Cowen).
 - `long_short_whale.py` : Analyse des positions Long/Short sur GMX V2 via Dune Analytics.
 - `cycle_roi_indicator.py` : Comparaison des trajectoires de ROI post-top de cycle.
+- `realized_cap_utxo.py` : Répartition du Realized Cap par ancienneté des UTXO via Dune Analytics.
+- `tests/` : Suite de tests unitaires `pytest`.
