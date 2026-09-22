@@ -1,22 +1,27 @@
 import pandas as pd
-import numpy as np
-import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+import streamlit as st
+from datetime import datetime
+from fpdf import FPDF
 
+from data_provider import get_ticker_history
+
+@st.cache_data(ttl=3600)
 def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct, target_leverage=2.0, exit_frequency='Hebdomadaire', exit_pct=10.0, ticker='BTC-USD'):
     # 1. Download Data (with some buffer to detect peak before start if needed, but here we start at x1)
-    df = yf.download(ticker, start=start_date, end=end_date, interval='1d', progress=False)
+    df = get_ticker_history(ticker, start=start_date, end=end_date)
     if df.empty:
-        return None
+        return None, None
 
-    if isinstance(df.columns, pd.MultiIndex):
-        df = pd.DataFrame({'Close': df['Close'][ticker]})
-    else:
-        df = df[['Close']]
+    df = df[['Close']].sort_index()
 
-    df = df.sort_index()
+    return _simulate(df, initial_investment, drop_threshold_pct, target_leverage,
+                      exit_frequency, exit_pct, ticker)
 
+
+def _simulate(df, initial_investment, drop_threshold_pct, target_leverage,
+              exit_frequency, exit_pct, ticker):
+    """Logique pure de la simulation, séparée du téléchargement des données pour être testable."""
     # 2. Simulation variables
     portfolio_value = float(initial_investment)
     btc_price_start = df.iloc[0]['Close']
@@ -217,9 +222,6 @@ def run_simulation(start_date, end_date, initial_investment, drop_threshold_pct,
     trades_df = pd.DataFrame(trades)
 
     return history_df, trades_df
-
-from fpdf import FPDF
-import io
 
 def generate_pdf_report(history_df, trades_df, params):
     pdf = FPDF()

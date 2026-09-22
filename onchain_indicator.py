@@ -1,8 +1,9 @@
 import pandas as pd
-import yfinance as yf
 import plotly.graph_objects as go
 import streamlit as st
 import warnings
+
+from data_provider import get_ticker_history
 
 warnings.filterwarnings("ignore")
 
@@ -10,7 +11,9 @@ warnings.filterwarnings("ignore")
 def get_onchain_plot():
     # ==================== Données BTC ====================
     # On utilise 2010 pour avoir le maximum de données comme demandé précédemment
-    btc = yf.download('BTC-USD', start='2010-01-01', interval='1d', progress=False)
+    btc = get_ticker_history('BTC-USD', start='2010-01-01')
+    if btc.empty:
+        return None
     btc = btc[['Close']].reset_index()
     btc.columns = ['timestamp', 'close']
 

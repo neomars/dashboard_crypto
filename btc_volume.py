@@ -1,9 +1,10 @@
 import pandas as pd
-import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import warnings
 import streamlit as st
+
+from data_provider import get_ticker_history
 
 warnings.filterwarnings("ignore")
 
@@ -11,17 +12,10 @@ warnings.filterwarnings("ignore")
 def get_btc_volume_plot():
     # ====================== Téléchargement des données ======================
     # Utilisation de l'historique complet disponible
-    btc = yf.download('BTC-USD', period="max", interval="1d", progress=False)
+    btc = get_ticker_history('BTC-USD', period="max", interval="1d")
 
     if btc.empty:
         return None
-
-    # Harmonisation MultiIndex yfinance si nécessaire
-    if isinstance(btc.columns, pd.MultiIndex):
-        btc_flat = pd.DataFrame(index=btc.index)
-        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-            btc_flat[col] = btc[col]['BTC-USD']
-        btc = btc_flat
 
     # Ajout de la colonne "Color" pour le volume
     btc['Color'] = btc.apply(lambda row: 'green' if row['Close'] >= row['Open'] else 'red', axis=1)

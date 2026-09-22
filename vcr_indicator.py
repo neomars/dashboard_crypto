@@ -1,22 +1,19 @@
 import pandas as pd
-import yfinance as yf
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 from datetime import datetime, timedelta
 
+from data_provider import get_ticker_history
+
 @st.cache_data(ttl=3600)
 def fetch_vcr_data():
-    btc = yf.download('BTC-USD', start='2018-01-01', interval='1d', progress=False)
+    btc = get_ticker_history('BTC-USD', start='2018-01-01')
     if btc.empty:
         return None
 
-    if isinstance(btc.columns, pd.MultiIndex):
-        btc = pd.DataFrame({'Close': btc['Close']['BTC-USD']})
-    else:
-        btc = btc[['Close']]
-
+    btc = btc[['Close']].copy()
     btc['Return'] = np.log(btc['Close'] / btc['Close'].shift(1))
     return btc
 

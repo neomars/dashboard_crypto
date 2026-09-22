@@ -1,25 +1,30 @@
 import pandas as pd
-import yfinance as yf
 import requests
 import plotly.graph_objects as go
 import streamlit as st
 import warnings
 
+from data_provider import get_ticker_history
+
 warnings.filterwarnings("ignore")
+
+REQUEST_TIMEOUT = 15
 
 @st.cache_data(ttl=3600)
 def get_btc_fear_greed_plot():
     # Fear & Greed
     url = "https://api.alternative.me/fng/?limit=0"
     try:
-        response = requests.get(url).json()
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        payload = response.json()
     except Exception:
         return None
 
-    if 'data' not in response:
+    if 'data' not in payload:
         return None
 
-    fg = pd.DataFrame(response['data'])
+    fg = pd.DataFrame(payload['data'])
     fg['timestamp'] = pd.to_numeric(fg['timestamp'], errors='coerce')
     fg = fg.dropna(subset=['timestamp'])
     fg['timestamp'] = pd.to_datetime(fg['timestamp'], unit='s')
@@ -28,7 +33,9 @@ def get_btc_fear_greed_plot():
     fg = fg[['timestamp', 'fear_greed']].sort_values('timestamp').reset_index(drop=True)
 
     # BTC
-    btc = yf.download('BTC-USD', start='2010-01-01', interval='1d', progress=False)
+    btc = get_ticker_history('BTC-USD', start='2010-01-01')
+    if btc.empty:
+        return None
     btc = btc[['Close']].reset_index()
     btc.columns = ['timestamp', 'close']
 
@@ -41,18 +48,21 @@ def get_btc_fear_greed_plot():
         g = int(255 * (fg_value / 100))
         return f"rgb({r},{g},0)"
 
-    # Graphique simple (seulement Daily)
+    # Graphique
     fig = go.Figure()
 
-    # Segments colorés
-    # Note: Adding many traces can be slow in Plotly.
-    # To optimize, we could group consecutive segments with similar F&G values,
-    # but for now let's stick to the user's logic while allowing it to be cached.
-    for i in range(len(df) - 1):
-        color = get_color(df['fear_greed'].iloc[i])
+    # Regroupe les jours consécutifs par tranche de 5 points de F&G : une trace
+    # Plotly par jour (des milliers sur l'historique complet) ralentissait fortement le rendu.
+    df['color_bucket'] = (df['fear_greed'] // 5) * 5
+    segment_starts = df.index[df['color_bucket'].ne(df['color_bucket'].shift())].tolist()
+    segment_bounds = segment_starts + [len(df)]
+
+    for start, end in zip(segment_bounds[:-1], segment_bounds[1:]):
+        seg_end = min(end + 1, len(df))  # +1 pour relier visuellement les segments entre eux
+        color = get_color(df['color_bucket'].iloc[start])
         fig.add_trace(go.Scatter(
-            x=df['timestamp'].iloc[i:i+2],
-            y=df['close'].iloc[i:i+2],
+            x=df['timestamp'].iloc[start:seg_end],
+            y=df['close'].iloc[start:seg_end],
             mode='lines',
             line=dict(color=color, width=3),
             hoverinfo='skip'

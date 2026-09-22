@@ -1,23 +1,19 @@
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime
 import streamlit as st
 
+from data_provider import get_ticker_history
+
 @st.cache_data
 def get_cycle_plot():
     # 1. Fetch Data
-    btc = yf.download("BTC-USD", start="2010-01-01")
+    btc = get_ticker_history("BTC-USD", start="2010-01-01")
     if btc.empty:
         return None
 
-    if isinstance(btc.columns, pd.MultiIndex):
-        close_prices = btc['Close']['BTC-USD']
-    else:
-        close_prices = btc['Close']
-
-    df = pd.DataFrame({'Close': close_prices})
+    df = pd.DataFrame({'Close': btc['Close']})
     df['LogPrice'] = np.log10(df['Close'])
 
     # 2. Angle calculation (1 rotation = 4 years)

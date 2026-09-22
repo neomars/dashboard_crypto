@@ -49,3 +49,16 @@ def save_dune_api_key(api_key):
 
 def delete_dune_api_key():
     delete_api_key('DUNE', 'api_key')
+
+def get_dune_query_id(name, default):
+    """Résout l'ID d'une requête Dune sans le coder en dur dans chaque module.
+
+    Ordre de priorité : variable d'environnement DUNE_QUERY_<NAME> >
+    section [DUNE_QUERIES] de config.ini > valeur par défaut.
+    """
+    env_value = os.environ.get(f"DUNE_QUERY_{name.upper()}")
+    if env_value:
+        return env_value
+
+    ini_value = get_api_key('DUNE_QUERIES', name)
+    return ini_value if ini_value else str(default)
