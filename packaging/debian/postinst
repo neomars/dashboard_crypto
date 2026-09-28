@@ -1,0 +1,27 @@
+#!/bin/sh
+# Crée l'environnement Python de l'application. Il est reconstruit à chaque
+# installation/mise à jour pour suivre la version de python3 du système.
+# --system-site-packages donne accès à python3-gi (fenêtre native WebKitGTK) ;
+# --ignore-installed garde les dépendances de l'application isolées de
+# celles éventuellement installées par apt.
+set -e
+
+APP=/opt/dashboard-crypto
+
+if [ "$1" = "configure" ]; then
+    rm -rf "$APP/venv"
+    /usr/bin/python3 -m venv --system-site-packages "$APP/venv"
+    echo "Dashboard Crypto : installation des dépendances Python (connexion Internet requise)..."
+    "$APP/venv/bin/pip" install --quiet --disable-pip-version-check --no-cache-dir \
+        --ignore-installed -r "$APP/app/requirements.txt" pywebview
+    "$APP/venv/bin/python" -m compileall -q "$APP/app" "$APP/launcher.py" >/dev/null || true
+
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q /usr/share/applications || true
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
+    fi
+fi
+
+exit 0

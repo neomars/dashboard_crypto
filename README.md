@@ -20,6 +20,7 @@ L'application propose une interface de navigation latérale pour choisir parmi l
 12. **Long/Short Positions (GMX V2)** : Analyse du sentiment de marché (Open Interest Long vs Short) sur les marchés perpétuels via Dune Analytics.
 13. **Bitcoin Market Cycle ROI** : Comparaison de la performance du Bitcoin (ROI) depuis les différents sommets (tops) de cycle historiques.
 14. **Realized Cap - UTXO Age Bands** : Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge, de moins d'un jour à plus de 10 ans) via Dune Analytics.
+15. **Net Realized Profit / Loss** : Profit et perte réalisés chaque semaine sur la blockchain, affichés en bulles sur le prix du Bitcoin (vert = profit net, rouge = perte nette, taille proportionnelle au montant), à la manière du graphique Glassnode « Profit Taking ». Permet de voir si une hausse s'accompagne d'une forte prise de profit ou non. Nécessite de créer la requête Dune fournie (voir [Configuration avancée](#5-configuration-avancée--ids-des-requêtes-dune)).
 
 ### Calcul du Bitcoin Cycle Correction Analysis
 
@@ -66,7 +67,30 @@ Plus la moyenne des corrections et la correction la plus forte diminuent d’un 
 *   **Cycle 2022-2025** (en cours) : Moyenne (19.0%), Max (15.0%)
 Cela montre une nette réduction de l’amplitude des corrections au fil des cycles.
 
-## Installation
+## Installation sur Debian / Ubuntu (application)
+
+Un paquet `.deb` est publié dans les [Releases](https://github.com/neomars/dashboard_crypto/releases) du dépôt : `dashboard-crypto_<version>_all.deb` (Debian 12+, Ubuntu 22.04+, Mint…).
+
+```bash
+sudo apt install ./dashboard-crypto_<version>_all.deb
+```
+
+- L'installation crée l'environnement Python de l'application dans `/opt/dashboard-crypto/venv` : **une connexion Internet est nécessaire** pendant l'installation (quelques minutes).
+- **Dashboard Crypto** apparaît ensuite dans le menu des applications. Elle s'ouvre dans sa propre fenêtre ; fermer la fenêtre arrête l'application.
+- En ligne de commande : `dashboard-crypto` (fenêtre native), `dashboard-crypto --browser` (dans le navigateur par défaut).
+- La configuration (clé API Dune, IDs de requêtes) est enregistrée dans `~/.config/dashboard-crypto/config.ini`, le journal du serveur dans `~/.cache/dashboard-crypto/streamlit.log`.
+- Mise à jour : installez simplement le nouveau `.deb` par-dessus. Désinstallation : `sudo apt remove dashboard-crypto`.
+
+### Construire le paquet soi-même
+
+```bash
+packaging/debian/build_deb.sh          # version lue dans le fichier VERSION
+packaging/debian/build_deb.sh 1.2.0    # version explicite
+```
+
+Le paquet est créé dans `dist/`. Le workflow GitHub `Build` fait la même chose automatiquement : pousser un tag `v1.2.0` construit la version 1.2.0, vérifie que le paquet s'installe et démarre, puis la publie dans une Release. Il peut aussi être lancé manuellement depuis l'onglet Actions.
+
+## Installation depuis les sources
 
 ### 1. Prérequis
 Assurez-vous d'avoir Python 3.8+ installé.
@@ -97,7 +121,7 @@ Vous pouvez configurer cette clé de deux manières :
 
 ### 5. Configuration avancée : IDs des requêtes Dune
 
-Les IDs des requêtes Dune (SOPR, Institutional Holding, Long/Short, Realized Cap UTXO) ont des valeurs par défaut codées en dur, mais sont surchargeables sans modifier le code, par ordre de priorité :
+Les IDs des requêtes Dune (SOPR, Institutional Holding, Long/Short, Realized Cap UTXO, Net Realized Profit/Loss) ont des valeurs par défaut codées en dur (sauf Net Realized Profit/Loss), mais sont surchargeables sans modifier le code, par ordre de priorité :
 
 1. Variable d'environnement `DUNE_QUERY_<NOM>` (ex : `DUNE_QUERY_SOPR=1234567`)
 2. Section `[DUNE_QUERIES]` du fichier `config.ini` :
@@ -107,8 +131,11 @@ Les IDs des requêtes Dune (SOPR, Institutional Holding, Long/Short, Realized Ca
    institutional = 2345678
    long_short = 3456789
    realized_cap_utxo = 4567890
+   net_realized_pnl = 5678901
    ```
 3. Valeur par défaut intégrée au code.
+
+**Net Realized Profit / Loss** n'a pas de requête par défaut : créez une nouvelle requête sur [dune.com](https://dune.com) en y collant le SQL de [`dune_queries/net_realized_pnl.sql`](dune_queries/net_realized_pnl.sql), exécutez-la, puis renseignez son ID sous la clé `net_realized_pnl`. La requête doit renvoyer une colonne de date (`week`, `day`, `date`…) et soit deux colonnes profit/perte, soit une colonne nette ; les montants sont regroupés par semaine.
 
 ## Utilisation
 
@@ -155,4 +182,6 @@ pytest
 - `long_short_whale.py` : Analyse des positions Long/Short sur GMX V2 via Dune Analytics.
 - `cycle_roi_indicator.py` : Comparaison des trajectoires de ROI post-top de cycle.
 - `realized_cap_utxo.py` : Répartition du Realized Cap par ancienneté des UTXO via Dune Analytics.
+- `net_realized_pnl.py` : Profit/perte réalisés par semaine en bulles sur le prix BTC (requête Dune : `dune_queries/net_realized_pnl.sql`).
+- `packaging/debian/` : Paquet Debian (script de construction, lanceur en fenêtre native, entrée de menu, icône).
 - `tests/` : Suite de tests unitaires `pytest`.

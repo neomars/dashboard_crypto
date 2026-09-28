@@ -1,7 +1,9 @@
 from configparser import ConfigParser
 import os
 
-CONFIG_FILE = 'config.ini'
+# Chemin surchargable : l'application installée (paquet .deb) est en lecture
+# seule sous /opt, son lanceur pointe donc vers ~/.config/dashboard-crypto/.
+CONFIG_FILE = os.environ.get('DASHBOARD_CRYPTO_CONFIG', 'config.ini')
 
 def get_api_key(section, option):
     config = ConfigParser()
@@ -21,6 +23,9 @@ def save_api_key(section, option, api_key):
 
     config.set(section, option, api_key)
 
+    config_dir = os.path.dirname(CONFIG_FILE)
+    if config_dir:
+        os.makedirs(config_dir, exist_ok=True)
     with open(CONFIG_FILE, 'w') as f:
         config.write(f)
 
