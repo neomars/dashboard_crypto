@@ -1,13 +1,30 @@
-use super::IndicatorOutput;
+use super::{IndicatorOutput, Level};
+use crate::bgeometrics;
 use crate::data::DataProvider;
-use crate::dune;
 use crate::figure::{dates, merge, two_rows, Figure};
+use crate::series::opt_json;
+use crate::table::{self, Row};
 use chrono::NaiveDate;
 use serde_json::json;
 use std::collections::BTreeMap;
 
-/// Avoirs par émetteur, alignés sur `days` : dernière valeur connue à cette
-/// date (0 avant la première).
+/// Séries à empiler : une par ETF si la réponse les détaille (en écartant
+/// alors un éventuel total), sinon la seule série disponible.
+pub(crate) fn holding_columns(rows: &[Row]) -> Vec<String> {
+    let cols = bgeometrics::value_columns(rows);
+    let detailed: Vec<String> = cols
+        .iter()
+        .filter(|c| !c.to_lowercase().contains("total"))
+        .cloned()
+        .collect();
+    if detailed.len() > 1 {
+        detailed
+    } else {
+        cols
+    }
+}
+
+/// Dernière valeur connue à chaque date de `days` (0 avant la première).
 pub(crate) fn align_holdings(series: &BTreeMap<NaiveDate, f64>, days: &[NaiveDate]) -> Vec<f64> {
     days.iter()
         .map(|d| {
@@ -21,37 +38,19 @@ pub(crate) fn align_holdings(series: &BTreeMap<NaiveDate, f64>, days: &[NaiveDat
 }
 
 pub async fn render(data: &DataProvider) -> Result<IndicatorOutput, String> {
-    let query_id = data.config().dune_query_id("institutional", "3382000");
-    let rows = data.dune_results(&query_id).await?;
-    if rows.is_empty() {
-        return Err("Aucune donnée retournée par la requête Dune.".into());
-    }
-    let time_col = dune::find_column(&rows, &["time", "date", "block_time", "day"]);
-    let ticker_col = dune::find_column(&rows, &["etf_ticker", "ticker", "symbol"]);
-    let val_col = dune::find_column(&rows, &["tvl", "holding", "btc_held", "amount"]);
-    let (Some(time_col), Some(ticker_col), Some(val_col)) = (time_col, ticker_col, val_col) else {
+    let etf = data.bgeometrics("etf").await?;
+    let cols = holding_columns(&etf.rows);
+    if cols.is_empty() {
         return Err(format!(
-            "Structure de données Dune inattendue. Colonnes : {:?}",
-            dune::columns(&rows)
+            "Aucune valeur numérique dans les données ETF. Colonnes : {:?}",
+            table::columns(&etf.rows)
         ));
-    };
-
-    // Pivot : une série par émetteur
-    let mut by_ticker: BTreeMap<String, BTreeMap<NaiveDate, f64>> = BTreeMap::new();
-    for r in rows.iter() {
-        if let (Some(d), Some(v)) = (dune::date(r, &time_col), dune::num(r, &val_col)) {
-            by_ticker
-                .entry(dune::value_as_string(&r[&ticker_col]))
-                .or_default()
-                .insert(d, v);
-        }
     }
-    let start = by_ticker
-        .values()
-        .filter_map(|s| s.keys().next())
-        .min()
-        .copied()
-        .ok_or("Aucune date valide dans les données Dune.")?;
+    let rows = bgeometrics::dated_rows(&etf.rows);
+    let start = rows
+        .first()
+        .ok_or("Aucune date valide dans les données ETF.")?
+        .0;
     let btc = data
         .ticker_range("BTC-USD", Some(start), None)
         .await
@@ -64,13 +63,13 @@ pub async fn render(data: &DataProvider) -> Result<IndicatorOutput, String> {
         0.08,
         Some([
             "Prix du Bitcoin (USD)",
-            "Breakdown des Holdings Institutionnels (BTC)",
+            "Bitcoin détenus par les ETF spot (BTC)",
         ]),
     );
     merge(
         &mut layout,
         json!({
-            "title": {"text": "Bitcoin - Holdings Institutionnels Détaillés vs Prix"},
+            "title": {"text": "Bitcoin - Holdings des ETF vs Prix"},
             "xaxis2": {"title": {"text": "Date"}},
             "yaxis": {"title": {"text": "Prix BTC (USD)"}, "type": "log"},
             "yaxis2": {"title": {"text": "Holdings (BTC)"}},
@@ -80,19 +79,29 @@ pub async fn render(data: &DataProvider) -> Result<IndicatorOutput, String> {
         }),
     );
     let mut fig = Figure::new(layout);
-    fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Prix BTC", "x": x, "y": btc.iter().map(|c| c.close).collect::<Vec<_>>(),
-        "line": {"color": "#00CCFF", "width": 2}}));
-    for (ticker, series) in &by_ticker {
-        fig.trace(json!({"type": "scatter", "mode": "lines", "name": ticker, "x": x, "y": align_holdings(series, &days),
+    fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Prix BTC", "x": x,
+        "y": btc.iter().map(|c| c.close).collect::<Vec<_>>(), "line": {"color": "#00CCFF", "width": 2}}));
+    for col in &cols {
+        let series: BTreeMap<NaiveDate, f64> = rows
+            .iter()
+            .filter_map(|(d, r)| Some((*d, table::num(r, col)?)))
+            .collect();
+        fig.trace(json!({"type": "scatter", "mode": "lines", "name": col, "x": x,
+            "y": align_holdings(&series, &days).into_iter().map(|v| opt_json(Some(v))).collect::<Vec<_>>(),
             "xaxis": "x2", "yaxis": "y2", "stackgroup": "one", "line": {"width": 0.5}, "hovertemplate": "%{y:,.0f} BTC"}));
     }
-    Ok(fig.into())
+    let out = IndicatorOutput::from(fig);
+    Ok(match etf.stale_notice() {
+        Some(n) => out.with_notice(Level::Warning, n),
+        None => out,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::data::parse_ymd as d;
+    use serde_json::json;
 
     #[test]
     fn holdings_forward_fill_and_start_at_zero() {
@@ -106,5 +115,21 @@ mod tests {
             d("2024-01-05"),
         ];
         assert_eq!(align_holdings(&s, &days), vec![0.0, 10.0, 10.0, 30.0]);
+    }
+
+    #[test]
+    fn per_etf_columns_exclude_total() {
+        let rows: Vec<Row> = vec![
+            json!({"d": "2024-01-11", "unixTs": 1, "ibit": 10, "fbtc": 5, "etfTotal": 15})
+                .as_object()
+                .unwrap()
+                .clone(),
+        ];
+        assert_eq!(holding_columns(&rows), vec!["ibit", "fbtc"]);
+        let total_only: Vec<Row> = vec![json!({"d": "2024-01-11", "unixTs": 1, "etfBtcTotal": 15})
+            .as_object()
+            .unwrap()
+            .clone()];
+        assert_eq!(holding_columns(&total_only), vec!["etfBtcTotal"]);
     }
 }

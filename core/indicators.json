@@ -38,19 +38,19 @@
     },
     {
         "id": "sopr",
-        "name": "STH-SOPR",
+        "name": "SOPR (STH & LTH)",
         "icon": "📉",
-        "description": "Ratio de profit des détenteurs à court terme via Dune Analytics.",
+        "description": "Ratio de profit des pièces dépensées par les détenteurs à court terme (STH) et à long terme (LTH), via BGeometrics.",
         "default_scale": "linear",
         "interpretation": "SOPR > 1 : Profit (Marché haussier). SOPR < 1 : Perte (Marché baissier/Correction). Ligne orange (1.0) : Support/Résistance clé."
     },
     {
         "id": "institutional",
-        "name": "BTC Institutional Holding",
+        "name": "BTC ETF Holdings",
         "icon": "🏦",
-        "description": "Visualisation de l'accumulation de Bitcoin par les institutionnels (ETFs) via Dune Analytics.",
+        "description": "Bitcoin détenus par les ETF spot, comparés au prix, via BGeometrics.",
         "default_scale": "logarithmique",
-        "interpretation": "Observe la corrélation entre le prix du Bitcoin et les avoirs détenus par les institutionnels."
+        "interpretation": "Observe la corrélation entre le prix du Bitcoin et les avoirs détenus par les ETF."
     },
     {
         "id": "volume",
@@ -85,11 +85,11 @@
     },
     {
         "id": "long_short",
-        "name": "Long/Short Positions (GMX V2)",
+        "name": "Long/Short Positions (OKX)",
         "icon": "📊",
-        "description": "Analyse des positions Long/Short sur les marchés perpétuels GMX V2 via Dune Analytics.",
+        "description": "Sentiment des traders sur les contrats perpétuels OKX : part des comptes long et short, et open interest.",
         "default_scale": "linear",
-        "interpretation": "Permet de visualiser le sentiment des traders (OI Long vs Short) avec superposition du prix de l'asset."
+        "interpretation": "Un ratio long/short élevé signale un marché très positionné à la hausse (risque de liquidations en cascade si le prix baisse), et inversement."
     },
     {
         "id": "cycle_roi",
@@ -101,9 +101,9 @@
     },
     {
         "id": "realized_cap_utxo",
-        "name": "Realized Cap - UTXO Age Bands",
+        "name": "Realized Cap HODL Waves",
         "icon": "🗓️",
-        "description": "Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge) via Dune Analytics.",
+        "description": "Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge), via BGeometrics.",
         "default_scale": "linear",
         "interpretation": "Une part croissante des bandes longues (2y+) reflète l'accumulation par les détenteurs de long terme (HODLers)."
     },
@@ -111,7 +111,7 @@
         "id": "net_realized_pnl",
         "name": "Net Realized Profit / Loss",
         "icon": "💰",
-        "description": "Profit et perte réalisés chaque semaine sur la blockchain, en bulles sur le prix du Bitcoin, via Dune Analytics.",
+        "description": "Profit ou perte nets réalisés chaque semaine sur la blockchain, en bulles sur le prix du Bitcoin, via BGeometrics.",
         "default_scale": "linear",
         "interpretation": "Bulle verte = profit net réalisé sur la semaine, rouge = perte nette ; la taille est proportionnelle au montant. Une hausse de prix avec de petites bulles vertes signale une prise de profit encore faible (peu de pression vendeuse)."
     }

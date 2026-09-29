@@ -148,7 +148,7 @@ th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background
 .tool span { color: var(--muted); font-size: 13px; }
 
 .queries td { vertical-align: middle; }
-.queries td input { width: 140px; }
+.queries td input { width: 320px; }
 .muted { color: var(--muted); }
 a { color: var(--info-text); }
 code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }

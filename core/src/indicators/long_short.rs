@@ -1,15 +1,21 @@
+//! Positions Long/Short des traders sur les contrats perpétuels OKX
+//! (`<PAIRE>-USDT-SWAP`) : ratio de comptes nets long / nets short et open
+//! interest, depuis l'API publique d'OKX (sans clé).
+
 use super::{param_str, IndicatorOutput};
 use crate::data::DataProvider;
-use crate::dune::{self, Row};
 use crate::figure::{dates, Figure};
 use crate::series::opt_json;
 use chrono::NaiveDate;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 pub const PAIRS: [&str; 6] = ["BTC", "ETH", "SOL", "DOGE", "AVAX", "LINK"];
 
-fn is_position_col(c: &str, side: &str) -> bool {
-    c.contains(side) && (c.contains("oi") || c.contains("size") || c.contains("position"))
+/// Part des comptes nets long et nets short (%) à partir du ratio long/short.
+pub(crate) fn account_shares(ratio: f64) -> (f64, f64) {
+    let long = ratio / (1.0 + ratio) * 100.0;
+    (long, 100.0 - long)
 }
 
 pub async fn render(data: &DataProvider, params: &Value) -> Result<IndicatorOutput, String> {
@@ -19,131 +25,83 @@ pub async fn render(data: &DataProvider, params: &Value) -> Result<IndicatorOutp
     }
     let mode = param_str(params, "mode", "Long vs Short");
 
-    let query_id = data.config().dune_query_id("long_short", "3089944");
-    let all = data.dune_results(&query_id).await?;
-    if all.is_empty() {
-        return Err(
-            "Aucune donnée retournée par Dune. Vérifiez votre Query ID ou vos paramètres.".into(),
-        );
-    }
-    let date_col = dune::find_column_by(&all, |c| ["date", "block_time", "time"].contains(&c));
-    let asset_col = dune::find_column_by(&all, |c| {
-        ["asset", "symbol", "pair", "market", "token"]
-            .iter()
-            .any(|s| c.contains(s))
-    });
-    let rows: Vec<&Row> = match &asset_col {
-        Some(col) => all
-            .iter()
-            .filter(|r| {
-                dune::value_as_string(&r[col])
-                    .to_uppercase()
-                    .contains(&pair)
-            })
-            .collect(),
-        None => all.iter().collect(),
-    };
-    if rows.is_empty() {
-        return Err(format!(
-            "Aucune donnée trouvée pour la paire {pair} dans les résultats Dune."
-        ));
-    }
-    let cols = dune::columns(&all);
-    let long_col = cols
-        .iter()
-        .find(|c| is_position_col(&c.to_lowercase(), "long"));
-    let short_col = cols
-        .iter()
-        .find(|c| is_position_col(&c.to_lowercase(), "short"));
-    let (Some(date_col), Some(long_col), Some(short_col)) = (date_col, long_col, short_col) else {
-        return Err(format!("Colonnes Long/Short introuvables. Vérifiez la structure des données Dune. Colonnes disponibles : {cols:?}"));
-    };
-
-    let mut points: Vec<(NaiveDate, f64, f64)> = rows
-        .iter()
-        .filter_map(|r| {
-            Some((
-                dune::date(r, &date_col)?,
-                dune::num(r, long_col)?,
-                dune::num(r, short_col)?,
-            ))
-        })
-        .collect();
-    points.sort_by_key(|p| p.0);
-    let start = points
-        .first()
-        .ok_or("Aucune ligne exploitable dans les résultats Dune.")?
-        .0;
-    let x = dates(points.iter().map(|p| p.0));
-    let longs: Vec<f64> = points.iter().map(|p| p.1).collect();
-    let shorts: Vec<f64> = points.iter().map(|p| p.2).collect();
-
     let mut fig = Figure::new(json!({
         "height": 650, "hovermode": "x unified",
         "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
-        "yaxis": {"title": {"text": "Open Interest / Ratio"}, "side": "left"},
         "yaxis2": {"title": {"text": format!("Prix {pair} (USD)")}, "overlaying": "y", "side": "right", "showgrid": false},
-        "margin": {"t": 80, "b": 100}
+        "margin": {"t": 80, "b": 60}
     }));
-    let title = match mode {
-        "Ratio Long/Short" => {
-            let ratio: Vec<Value> = points
-                .iter()
-                .map(|p| opt_json(if p.2 != 0.0 { Some(p.1 / p.2) } else { None }))
-                .collect();
-            fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Ratio Long/Short", "x": x, "y": ratio, "line": {"color": "#FFD600", "width": 2.5}}));
+
+    let (x, title) = if mode == "Open Interest" {
+        // [contrats, actif de base, USD]
+        let oi = data.okx_history("open-interest-history", &pair).await?;
+        let x = dates(oi.iter().map(|p| p.0));
+        fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Open interest (USD)", "x": x,
+            "y": oi.iter().map(|p| opt_json(p.1.get(2).copied())).collect::<Vec<_>>(),
+            "line": {"color": "#FFD600", "width": 2}, "fill": "tozeroy", "fillcolor": "rgba(255,214,0,0.1)"}));
+        fig.layout["yaxis"] = json!({"title": {"text": "Open interest (USD)"}});
+        (
+            oi.iter().map(|p| p.0).collect::<Vec<NaiveDate>>(),
+            format!("{pair} - Open interest des perpétuels OKX"),
+        )
+    } else {
+        let ratio = data
+            .okx_history("long-short-account-ratio-contract", &pair)
+            .await?;
+        let x = dates(ratio.iter().map(|p| p.0));
+        let values: Vec<Option<f64>> = ratio
+            .iter()
+            .map(|p| p.1.first().copied().filter(|v| v.is_finite()))
+            .collect();
+        if mode == "Ratio Long/Short" {
+            fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Ratio Long/Short (comptes)", "x": x,
+                "y": values.iter().map(|v| opt_json(*v)).collect::<Vec<_>>(), "line": {"color": "#FFD600", "width": 2.5}}));
             fig.hline(1.0, "white", "dash", "y", "paper");
             fig.annotation(json!({"xref": "paper", "yref": "y", "x": 1, "y": 1.0, "xanchor": "right", "yanchor": "bottom", "text": "Équilibre", "showarrow": false}));
-            format!("{pair} - Ratio Long/Short")
+            fig.layout["yaxis"] = json!({"title": {"text": "Comptes long / comptes short"}});
+        } else {
+            let shares: Vec<Option<(f64, f64)>> =
+                values.iter().map(|v| v.map(account_shares)).collect();
+            fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Comptes long (%)", "x": x,
+                "y": shares.iter().map(|s| opt_json(s.map(|s| s.0))).collect::<Vec<_>>(), "line": {"color": "#00C853", "width": 2.5}}));
+            fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Comptes short (%)", "x": x,
+                "y": shares.iter().map(|s| opt_json(s.map(|s| s.1))).collect::<Vec<_>>(), "line": {"color": "#FF1744", "width": 2.5}}));
+            fig.layout["yaxis"] = json!({"title": {"text": "Part des comptes (%)"}});
         }
-        "Open Interest Cumulé" => {
-            let cum = |v: &[f64]| {
-                v.iter()
-                    .scan(0.0, |s, x| {
-                        *s += x;
-                        Some(*s)
-                    })
-                    .collect::<Vec<f64>>()
-            };
-            fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Cumulative Long", "x": x, "y": cum(&longs),
-                "line": {"color": "#00C853", "width": 2.5}, "fill": "tozeroy", "fillcolor": "rgba(0,200,83,0.1)"}));
-            fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Cumulative Short", "x": x, "y": cum(&shorts),
-                "line": {"color": "#FF1744", "width": 2.5}, "fill": "tozeroy", "fillcolor": "rgba(255,23,68,0.1)"}));
-            format!("{pair} - Volume OI Cumulé")
-        }
-        _ => {
-            fig.trace(json!({"type": "scatter", "mode": "lines", "name": format!("Long OI ({long_col})"), "x": x, "y": longs, "line": {"color": "#00C853", "width": 2.5}}));
-            fig.trace(json!({"type": "scatter", "mode": "lines", "name": format!("Short OI ({short_col})"), "x": x, "y": shorts, "line": {"color": "#FF1744", "width": 2.5}}));
-            format!("{pair} - Positions Ouvertes (GMX V2)")
-        }
+        (
+            ratio.iter().map(|p| p.0).collect::<Vec<NaiveDate>>(),
+            format!("{pair} - Positions Long/Short des traders (perpétuels OKX)"),
+        )
     };
     fig.layout["title"] = json!({"text": title});
 
     // Prix de l'actif superposé (dernier prix connu à chaque date)
-    if let Ok(prices) = data
-        .ticker_range(&format!("{pair}-USD"), Some(start), None)
-        .await
-    {
-        let by_day: std::collections::BTreeMap<NaiveDate, f64> =
-            prices.iter().map(|c| (c.date, c.close)).collect();
-        let y: Vec<Value> = points
-            .iter()
-            .map(|p| opt_json(by_day.range(..=p.0).next_back().map(|(_, v)| *v)))
-            .collect();
-        fig.trace(json!({"type": "scatter", "mode": "lines", "name": format!("Prix {pair} (USD)"), "x": x, "y": y, "yaxis": "y2",
-            "line": {"color": "#00CCFF", "width": 1.5, "dash": "dot"}}));
+    if let Some(start) = x.first() {
+        if let Ok(prices) = data
+            .ticker_range(&format!("{pair}-USD"), Some(*start), None)
+            .await
+        {
+            let by_day: BTreeMap<NaiveDate, f64> =
+                prices.iter().map(|c| (c.date, c.close)).collect();
+            let y: Vec<Value> = x
+                .iter()
+                .map(|d| opt_json(by_day.range(..=d).next_back().map(|(_, v)| *v)))
+                .collect();
+            fig.trace(json!({"type": "scatter", "mode": "lines", "name": format!("Prix {pair} (USD)"), "x": dates(x.iter().copied()),
+                "y": y, "yaxis": "y2", "line": {"color": "#00CCFF", "width": 1.5, "dash": "dot"}}));
+        }
     }
     Ok(fig.into())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_position_col;
+    use super::account_shares;
 
     #[test]
-    fn detects_position_columns() {
-        assert!(is_position_col("long_oi_usd", "long"));
-        assert!(is_position_col("short_position_size", "short"));
-        assert!(!is_position_col("long_count", "long"));
+    fn shares_from_ratio() {
+        assert_eq!(account_shares(1.0), (50.0, 50.0));
+        let (l, s) = account_shares(3.0);
+        assert!((l - 75.0).abs() < 1e-9 && (s - 25.0).abs() < 1e-9);
     }
 }

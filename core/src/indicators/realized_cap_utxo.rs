@@ -1,99 +1,113 @@
+//! Realized Cap HODL Waves : part du Realized Cap détenue par chaque tranche
+//! d'ancienneté des UTXO (BGeometrics).
+
 use super::{IndicatorOutput, Level};
+use crate::bgeometrics;
 use crate::data::DataProvider;
-use crate::dune::{self, Row, MISSING_KEY};
 use crate::figure::{dates, Figure};
 use crate::series::opt_json;
-use chrono::NaiveDate;
+use crate::table::{self, Row};
 use serde_json::json;
-use std::sync::Arc;
 
-const BANDS: [(&str, &str); 13] = [
-    ("10y+", "#004d33"),
-    ("7y-10y", "#0f5a3f"),
-    ("5y-7y", "#1f694e"),
-    ("3y-5y", "#2e7c5e"),
-    ("2y-3y", "#3d8f6e"),
-    ("18m-2y", "#4a9c8f"),
-    ("12m-18m", "#6b4fa0"),
-    ("6m-12m", "#c4458f"),
-    ("3m-6m", "#e6b87d"),
-    ("1m-3m", "#c38c5f"),
-    ("1w-1m", "#9c6644"),
-    ("1d-1w", "#808080"),
-    ("0d-1d", "#666666"),
-];
-
-/// Colonnes à empiler : les bandes d'âge connues, sinon toutes les colonnes
-/// numériques autres que la date.
-pub(crate) fn band_columns(rows: &[Row], date_col: &str) -> Vec<String> {
-    let cols = dune::columns(rows);
-    let known: Vec<String> = BANDS
-        .iter()
-        .map(|(b, _)| b.to_string())
-        .filter(|b| cols.contains(b))
-        .collect();
-    if !known.is_empty() {
-        return known;
+/// Ancienneté maximale (en jours) d'une tranche d'après son nom (`24h`,
+/// `1d_1w`, `1m-3m`, `age3y5y`, `10y+`...) : dernier nombre suivi d'une unité
+/// h/d/w/m/y (la borne haute, pour départager `24h` et `1d_1w`).
+pub(crate) fn age_days(name: &str) -> Option<f64> {
+    let lower = name.to_lowercase();
+    let bytes = lower.as_bytes();
+    let mut last = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+            i += 1;
+        }
+        let unit = match bytes.get(i) {
+            Some(b'h') => 1.0 / 24.0,
+            Some(b'd') => 1.0,
+            Some(b'w') => 7.0,
+            Some(b'm') => 30.0,
+            Some(b'y') => 365.0,
+            _ => continue,
+        };
+        if let Ok(value) = lower[start..i].parse::<f64>() {
+            last = Some(value * unit);
+        }
     }
-    cols.into_iter()
-        .filter(|c| c != date_col && rows.iter().take(20).any(|r| dune::num(r, c).is_some()))
+    last
+}
+
+/// Tranches triées de la plus ancienne à la plus récente (la plus ancienne
+/// en bas de l'empilement) ; ordre de l'API si les noms ne sont pas lisibles.
+pub(crate) fn band_columns(rows: &[Row]) -> Vec<String> {
+    let mut cols = bgeometrics::value_columns(rows);
+    if cols.iter().all(|c| age_days(c).is_some()) {
+        cols.sort_by(|a, b| age_days(b).unwrap().total_cmp(&age_days(a).unwrap()));
+    }
+    cols
+}
+
+/// Parts en % de chaque tranche (la somme de chaque ligne vaut 100).
+pub(crate) fn percentages(rows: &[&Row], bands: &[String]) -> Vec<Vec<Option<f64>>> {
+    rows.iter()
+        .map(|r| {
+            let values: Vec<Option<f64>> = bands.iter().map(|b| table::num(r, b)).collect();
+            let total: f64 = values.iter().flatten().sum();
+            values
+                .into_iter()
+                .map(|v| v.filter(|_| total > 0.0).map(|v| v / total * 100.0))
+                .collect()
+        })
         .collect()
 }
 
-pub async fn render(data: &DataProvider) -> Result<IndicatorOutput, String> {
-    // Requête légère : Bitcoin UTXO Age Bands (mensuelle) - https://dune.com/queries/7611528
-    let query_id = data.config().dune_query_id("realized_cap_utxo", "7611528");
-    let mut notice = None;
-    let rows: Arc<Vec<Row>> = match data.dune_results(&query_id).await {
-        Ok(rows) if !rows.is_empty() => rows,
-        Err(e) if e == MISSING_KEY => return Err(e),
-        _ => {
-            notice =
-                Some("Aucun résultat en cache sur Dune : la requête a été exécutée (30 à 60 s).");
-            data.dune_execute(&query_id).await?
-        }
+fn color(i: usize, n: usize) -> String {
+    // Dégradé du vert foncé (anciens détenteurs) au rouge (pièces récentes).
+    let t = if n > 1 {
+        i as f64 / (n - 1) as f64
+    } else {
+        0.0
     };
-    let date_col =
-        dune::find_column(&rows, &["date", "month", "time", "block_time"]).ok_or_else(|| {
-            format!(
-                "Aucune colonne de date. Colonnes : {:?}",
-                dune::columns(&rows)
-            )
-        })?;
-    let bands = band_columns(&rows, &date_col);
+    format!(
+        "hsl({:.0}, 70%, {:.0}%)",
+        150.0 - 150.0 * t,
+        25.0 + 30.0 * t
+    )
+}
+
+pub async fn render(data: &DataProvider) -> Result<IndicatorOutput, String> {
+    let waves = data.bgeometrics("realized_cap_hodl_waves").await?;
+    let bands = band_columns(&waves.rows);
     if bands.is_empty() {
         return Err(format!(
-            "Aucune bande d'âge dans les données. Colonnes : {:?}",
-            dune::columns(&rows)
+            "Aucune tranche d'âge dans les données. Colonnes : {:?}",
+            table::columns(&waves.rows)
         ));
     }
-    let mut rows: Vec<(NaiveDate, &Row)> = rows
-        .iter()
-        .filter_map(|r| Some((dune::date(r, &date_col)?, r)))
-        .collect();
-    rows.sort_by_key(|(d, _)| *d);
+    let rows = bgeometrics::dated_rows(&waves.rows);
     let x = dates(rows.iter().map(|(d, _)| *d));
+    let pct = percentages(&rows.iter().map(|(_, r)| *r).collect::<Vec<_>>(), &bands);
 
     let mut fig = Figure::new(json!({
-        "title": {"text": "Bitcoin: Realized Cap - UTXO Age Bands (%)"},
+        "title": {"text": "Bitcoin : Realized Cap HODL Waves (%)"},
         "height": 750, "hovermode": "x unified",
         "legend": {"orientation": "h", "y": -0.15, "x": 0.5, "xanchor": "center"},
-        "yaxis": {"title": {"text": "Pourcentage du Realized Cap (%)"}, "range": [0, 100], "ticksuffix": "%"},
+        "yaxis": {"title": {"text": "Part du Realized Cap (%)"}, "range": [0, 100], "ticksuffix": "%"},
         "xaxis": {"title": {"text": "Date"}}, "margin": {"t": 50, "b": 100}
     }));
-    for band in &bands {
-        let color = BANDS
-            .iter()
-            .find(|(b, _)| b == band)
-            .map(|(_, c)| *c)
-            .unwrap_or("#888888");
-        fig.trace(json!({"type": "scatter", "mode": "lines", "name": band, "x": x, "stackgroup": "one", "fillcolor": color,
-            "y": rows.iter().map(|(_, r)| opt_json(dune::num(r, band))).collect::<Vec<_>>(),
-            "line": {"width": 0.5, "color": "rgba(255,255,255,0.2)"}}));
+    for (i, band) in bands.iter().enumerate() {
+        let c = color(i, bands.len());
+        fig.trace(json!({"type": "scatter", "mode": "lines", "name": band, "x": x, "stackgroup": "one", "fillcolor": c,
+            "y": pct.iter().map(|row| opt_json(row[i])).collect::<Vec<_>>(),
+            "line": {"width": 0.5, "color": "rgba(255,255,255,0.2)"}, "hovertemplate": "%{y:.1f} %"}));
     }
     let out = IndicatorOutput::from(fig);
-    Ok(match notice {
-        Some(n) => out.with_notice(Level::Info, n),
+    Ok(match waves.stale_notice() {
+        Some(n) => out.with_notice(Level::Warning, n),
         None => out,
     })
 }
@@ -103,24 +117,35 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn rows(v: serde_json::Value) -> Vec<Row> {
-        v.as_array()
+    #[test]
+    fn ages_from_band_names() {
+        assert_eq!(age_days("24h"), Some(1.0));
+        assert_eq!(age_days("1d_1w"), Some(7.0));
+        assert_eq!(age_days("age_1m_3m"), Some(90.0));
+        assert_eq!(age_days("10y+"), Some(3650.0));
+        assert_eq!(age_days("unixTs"), None);
+    }
+
+    #[test]
+    fn bands_sorted_oldest_first_and_normalised() {
+        let rows: Vec<Row> = vec![
+            json!({"d": "2024-01-01", "unixTs": 1, "1d_1w": 1.0, "24h": 0.0, "1y_2y": 3.0, "10y": 4.0})
+                .as_object()
+                .unwrap()
+                .clone(),
+        ];
+        let bands = band_columns(&rows);
+        assert_eq!(bands, vec!["10y", "1y_2y", "1d_1w", "24h"]);
+        let pct = percentages(&[&rows[0]], &bands);
+        assert_eq!(pct[0], vec![Some(50.0), Some(37.5), Some(12.5), Some(0.0)]);
+    }
+
+    #[test]
+    fn unreadable_names_keep_api_order() {
+        let rows: Vec<Row> = vec![json!({"d": "2024-01-01", "young": 1.0, "old": 2.0})
+            .as_object()
             .unwrap()
-            .iter()
-            .map(|r| r.as_object().unwrap().clone())
-            .collect()
-    }
-
-    #[test]
-    fn prefers_known_bands_in_display_order() {
-        let r = rows(json!([{"month": "2024-01-01", "0d-1d": 1, "10y+": 5, "other": 3}]));
-        assert_eq!(band_columns(&r, "month"), vec!["10y+", "0d-1d"]);
-    }
-
-    #[test]
-    fn falls_back_to_numeric_columns() {
-        let r =
-            rows(json!([{"month": "2024-01-01", "lt_1y": "40.5", "gt_1y": 59.5, "label": "x"}]));
-        assert_eq!(band_columns(&r, "month"), vec!["lt_1y", "gt_1y"]);
+            .clone()];
+        assert_eq!(band_columns(&rows), vec!["young", "old"]);
     }
 }

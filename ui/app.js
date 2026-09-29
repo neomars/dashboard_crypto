@@ -21,14 +21,15 @@ const DARK_TEMPLATE = {
 const PLOT_CONFIG = { responsive: true, displaylogo: false };
 
 const PAIRS = ["BTC", "ETH", "SOL", "DOGE", "AVAX", "LINK"];
-const LONG_SHORT_MODES = ["Long vs Short", "Ratio Long/Short", "Open Interest Cumulé"];
-const QUERY_LABELS = {
-  sopr: "STH-SOPR",
-  institutional: "BTC Institutional Holding",
-  long_short: "Long/Short Positions (GMX V2)",
-  realized_cap_utxo: "Realized Cap - UTXO Age Bands",
-  net_realized_pnl: "Net Realized Profit / Loss",
-};
+const LONG_SHORT_MODES = ["Long vs Short", "Ratio Long/Short", "Open Interest"];
+const SOURCES = [
+  ["Yahoo Finance", "https://finance.yahoo.com", "prix, volumes et historiques (BTC et autres tickers)"],
+  ["BGeometrics", "https://bitcoin-data.com", "métriques on-chain : SOPR, NRPL, HODL waves, ETF (gratuit : 8 requêtes/heure, 15/jour, 4 dernières années ; données gardées 12 h sur le disque)"],
+  ["OKX", "https://www.okx.com", "positions long/short et open interest des contrats perpétuels"],
+  ["alternative.me", "https://alternative.me/crypto/fear-and-greed-index/", "indice Fear & Greed"],
+  ["mempool.space", "https://mempool.space", "hauteur de bloc (estimation du prochain halving)"],
+  ["Bitcoin-Dataset (GitHub)", "https://github.com/Yrzxiong/Bitcoin-Dataset", "historique du prix BTC 2010-2018"],
+];
 
 const state = {
   indicators: [],
@@ -149,7 +150,7 @@ async function renderHome() {
   );
 
   const config = el("div", { class: "card" }, loading("Chargement de la configuration…"));
-  main.append(el("h2", {}, "🔑 Configuration"), config);
+  main.append(el("h2", {}, "🌐 Sources et configuration"), config);
 
   main.append(el("h2", {}, "Explorez nos outils"));
   const tools = el("div", { class: "tools" });
@@ -170,37 +171,27 @@ async function renderSettings(box) {
   }
   const status = el("div");
   const show = (level, text) => status.replaceChildren(notice(level, text));
+  const link = (label, url) => el("a", { href: "#", onclick: (e) => { e.preventDefault(); openUrl(url); } }, label);
 
-  const key = el("input", { type: "password", value: settings.dune_api_key, placeholder: "Clé API Dune", size: 40, autocomplete: "off" });
-  const dune = el("a", { href: "#", onclick: (e) => { e.preventDefault(); openUrl("https://dune.com"); } }, "dune.com");
-
-  const rows = settings.queries.map((q) => {
-    const input = el("input", { type: "text", value: q.value, placeholder: q.default || "à configurer", inputmode: "numeric" });
+  const rows = settings.endpoints.map((m) => {
+    const input = el("input", { type: "text", value: m.value, placeholder: m.candidates.join(" / "), spellcheck: "false" });
     const save = el("button", { class: "btn", type: "button", onclick: async () => {
       try {
-        await invoke("save_query_id", { name: q.name, value: input.value });
-        show("success", `ID de requête enregistré pour ${QUERY_LABELS[q.name] || q.name}.`);
+        await invoke("save_endpoint", { key: m.key, value: input.value });
+        show("success", input.value.trim() ? `Endpoint enregistré pour ${m.label}.` : `${m.label} : détection automatique rétablie.`);
       } catch (e) { show("error", String(e)); }
     } }, "Enregistrer");
-    return el("tr", {}, el("td", {}, QUERY_LABELS[q.name] || q.name), el("td", {}, el("code", {}, q.name)),
-      el("td", {}, input), el("td", {}, save));
+    return el("tr", {}, el("td", {}, m.label), el("td", {}, input), el("td", {}, save));
   });
 
   box.replaceChildren(
-    el("h3", {}, "API Dune Analytics"),
-    el("p", {}, "Les indicateurs basés sur Dune (SOPR, Institutional Holdings, Long/Short Positions, Realized Cap, Net Realized Profit/Loss) nécessitent une clé API gratuite : ", dune, "."),
-    el("div", { class: "row" }, key,
-      el("button", { class: "btn primary", type: "button", onclick: async () => {
-        try { await invoke("save_dune_api_key", { key: key.value }); show("success", "Clé Dune sauvegardée !"); }
-        catch (e) { show("error", String(e)); }
-      } }, "Sauvegarder"),
-      el("button", { class: "btn", type: "button", onclick: async () => {
-        try { await invoke("delete_dune_api_key"); key.value = ""; show("warning", "Clé Dune supprimée."); }
-        catch (e) { show("error", String(e)); }
-      } }, "Supprimer")),
-    el("h3", {}, "IDs des requêtes Dune"),
-    el("p", { class: "muted" }, "Laissez vide pour utiliser la requête par défaut. Net Realized Profit / Loss n'a pas de requête par défaut : créez-la sur Dune avec le SQL de dune_queries/net_realized_pnl.sql."),
-    el("table", { class: "queries" }, el("thead", {}, el("tr", {}, el("th", {}, "Indicateur"), el("th", {}, "Clé"), el("th", {}, "ID"), el("th"))), el("tbody", {}, rows)),
+    el("h3", {}, "Sources de données"),
+    el("p", {}, "Toutes les données viennent d'API publiques et gratuites, sans clé ni compte :"),
+    el("ul", {}, SOURCES.map(([name, url, what]) => el("li", {}, link(name, url), ` : ${what}`))),
+    el("h3", {}, "Endpoints BGeometrics"),
+    el("p", { class: "muted" }, "Laissez vide pour la détection automatique (les noms indiqués en gris sont essayés dans l'ordre). Si un indicateur ne trouve pas ses données, indiquez ici le nom exact de l'endpoint, visible dans la ",
+      link("documentation de l'API", "https://bitcoin-data.com/api/redoc.html"), "."),
+    el("table", { class: "queries" }, el("thead", {}, el("tr", {}, el("th", {}, "Métrique"), el("th", {}, "Endpoint"), el("th"))), el("tbody", {}, rows)),
     status,
     el("p", { class: "muted" }, "Fichier de configuration : ", el("code", {}, settings.config_path)),
   );

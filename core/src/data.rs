@@ -1,14 +1,18 @@
 //! Accès aux données externes avec cache mémoire (équivalent des
-//! `st.cache_data(ttl=...)` de la version Python).
+//! `st.cache_data(ttl=...)` de la version Python), et cache disque pour
+//! BGeometrics dont l'offre gratuite limite le nombre de requêtes.
 
+use crate::bgeometrics::{self, Reply};
 use crate::config::Config;
-use crate::dune::{self, Row};
+use crate::okx;
 use crate::series::{Candle, PricePoint};
+use crate::table::{self, Row};
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Utc};
 use serde_json::Value;
 use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -17,11 +21,12 @@ pub const OLD_BTC_DATASET_URL: &str =
 const YAHOO_CHART_URL: &str = "https://query2.finance.yahoo.com/v8/finance/chart/";
 const FEAR_GREED_URL: &str = "https://api.alternative.me/fng/?limit=0";
 const BLOCK_HEIGHT_URL: &str = "https://mempool.space/api/blocks/tip/height";
-const DUNE_API_URL: &str = "https://api.dune.com/api/v1";
 // Yahoo refuse les requêtes sans User-Agent de navigateur (HTTP 429).
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
 const HOUR: Duration = Duration::from_secs(3600);
+/// Les métriques BGeometrics sont mises à jour une fois par jour.
+const BGEOMETRICS_DISK_TTL: i64 = 12 * 3600;
 
 pub struct Halving {
     pub date: &'static str,
@@ -70,6 +75,30 @@ pub struct DataProvider {
     http: reqwest::Client,
     config: Config,
     cache: Mutex<HashMap<String, CacheEntry>>,
+    cache_dir: Option<PathBuf>,
+}
+
+/// Série BGeometrics récupérée (ou relue depuis le cache disque).
+#[derive(Debug, Clone)]
+pub struct BgSeries {
+    pub endpoint: String,
+    pub rows: Vec<Row>,
+    /// Date de récupération (UTC).
+    pub fetched: DateTime<Utc>,
+    /// Vrai si l'API a échoué et que des données plus anciennes sont affichées.
+    pub stale: bool,
+}
+
+impl BgSeries {
+    /// Message à afficher quand les données ne sont pas fraîches.
+    pub fn stale_notice(&self) -> Option<String> {
+        self.stale.then(|| {
+            format!(
+                "BGeometrics indisponible pour le moment (limite de requêtes gratuites ?) : affichage des données du {}.",
+                self.fetched.format("%d/%m/%Y à %H:%M UTC")
+            )
+        })
+    }
 }
 
 impl DataProvider {
@@ -84,7 +113,14 @@ impl DataProvider {
             http,
             config,
             cache: Mutex::new(HashMap::new()),
+            cache_dir: dirs::cache_dir().map(|d| d.join("dashboard-crypto")),
         }
+    }
+
+    /// Utilise un autre dossier pour le cache disque (tests).
+    pub fn with_cache_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.cache_dir = Some(dir.into());
+        self
     }
 
     pub fn config(&self) -> &Config {
@@ -142,8 +178,19 @@ impl DataProvider {
     }
 
     #[doc(hidden)]
-    pub fn seed_dune_results(&self, query_id: &str, rows: Vec<Row>) {
-        self.seed(format!("dune:{query_id}"), rows);
+    pub fn seed_bgeometrics(&self, key: &str, rows: Vec<Row>) {
+        let series = BgSeries {
+            endpoint: key.into(),
+            rows,
+            fetched: Utc::now(),
+            stale: false,
+        };
+        self.seed(format!("bg:{key}"), series);
+    }
+
+    #[doc(hidden)]
+    pub fn seed_okx(&self, kind: &str, pair: &str, rows: Vec<(NaiveDate, Vec<f64>)>) {
+        self.seed(format!("okx:{kind}:{}", pair.to_uppercase()), rows);
     }
 
     async fn get_text(&self, url: &str, timeout: Duration) -> Result<String, String> {
@@ -268,81 +315,174 @@ impl DataProvider {
         next_halving_estimate(height, Utc::now().naive_utc())
     }
 
-    /// Lignes du dernier résultat d'une requête Dune.
-    pub async fn dune_results(&self, query_id: &str) -> Result<Arc<Vec<Row>>, String> {
-        let api_key = self.config.dune_api_key();
-        if api_key.is_empty() {
-            return Err(dune::MISSING_KEY.into());
-        }
-        let query_id = query_id.to_string();
-        self.cached(&format!("dune:{query_id}"), HOUR, || async {
-            let url = format!("{DUNE_API_URL}/query/{query_id}/results");
-            let resp = self
-                .http
-                .get(&url)
-                .header("X-Dune-API-Key", &api_key)
-                .send()
-                .await
-                .map_err(|e| format!("Erreur de connexion à l'API Dune : {e}"))?;
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            dune::parse_results_response(status, &body, &query_id)
+    /// Métrique BGeometrics (voir [`bgeometrics::METRICS`]) : cache disque de
+    /// 12 h, noms d'endpoint candidats, et repli sur les dernières données
+    /// connues si l'API refuse la requête.
+    pub async fn bgeometrics(&self, key: &str) -> Result<Arc<BgSeries>, String> {
+        let metric = bgeometrics::metric(key)
+            .ok_or_else(|| format!("Métrique BGeometrics inconnue : {key}"))?;
+        self.cached(&format!("bg:{key}"), HOUR, || async {
+            let forced = self.config.bgeometrics_endpoint(key);
+            let disk = self.read_bg_disk(key);
+            if let Some(d) = &disk {
+                let fresh = (Utc::now() - d.fetched).num_seconds() < BGEOMETRICS_DISK_TTL;
+                if fresh && (forced.is_empty() || forced == d.endpoint) {
+                    return Ok(d.clone());
+                }
+            }
+
+            let mut names: Vec<String> = Vec::new();
+            if !forced.is_empty() {
+                names.push(forced.clone());
+            } else {
+                names.extend(disk.as_ref().map(|d| d.endpoint.clone()));
+                for c in metric.candidates {
+                    if !names.iter().any(|n| n == c) {
+                        names.push(c.to_string());
+                    }
+                }
+            }
+
+            let mut error = None;
+            for name in &names {
+                match self.fetch_bg(name).await {
+                    Reply::Rows(rows) => {
+                        let series = BgSeries { endpoint: name.clone(), rows, fetched: Utc::now(), stale: false };
+                        self.write_bg_disk(key, &series);
+                        return Ok(series);
+                    }
+                    Reply::NotFound => continue,
+                    Reply::Error(e) => {
+                        error = Some(e);
+                        break;
+                    }
+                }
+            }
+            if let Some(d) = disk {
+                return Ok(BgSeries { stale: true, ..d });
+            }
+            Err(error.unwrap_or_else(|| {
+                format!(
+                    "Aucun endpoint BGeometrics trouvé pour « {} » (essayés : {}). Indiquez le bon nom sur la page Accueil.",
+                    metric.label,
+                    names.join(", ")
+                )
+            }))
         })
         .await
     }
 
-    /// Lance l'exécution d'une requête Dune puis attend son résultat (~80 s max).
-    pub async fn dune_execute(&self, query_id: &str) -> Result<Arc<Vec<Row>>, String> {
-        let api_key = self.config.dune_api_key();
-        if api_key.is_empty() {
-            return Err(dune::MISSING_KEY.into());
+    async fn fetch_bg(&self, endpoint: &str) -> Reply {
+        if !bgeometrics::is_valid_endpoint(endpoint) {
+            return Reply::Error(format!("Nom d'endpoint BGeometrics invalide : {endpoint}"));
         }
-        let query_id = query_id.to_string();
-        self.cached(&format!("dune-exec:{query_id}"), HOUR * 2, || async {
-            let resp = self
-                .http
-                .post(format!("{DUNE_API_URL}/query/{query_id}/execute"))
-                .header("X-Dune-API-Key", &api_key)
-                .send()
-                .await
-                .map_err(|e| format!("Erreur exécution Dune : {e}"))?;
-            if !resp.status().is_success() {
-                return Err(format!(
-                    "Erreur exécution Dune : {}",
-                    resp.status().as_u16()
-                ));
+        let url = format!("{}{endpoint}", bgeometrics::BASE_URL);
+        match self.http.get(&url).send().await {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let body = resp.text().await.unwrap_or_default();
+                bgeometrics::parse_reply(status, &body)
             }
-            let v: Value = resp
-                .json()
-                .await
-                .map_err(|e| format!("Erreur exécution Dune : {e}"))?;
-            let execution_id = v["execution_id"]
-                .as_str()
-                .ok_or("Réponse d'exécution Dune sans execution_id.")?
-                .to_string();
+            Err(e) => Reply::Error(format!("Erreur réseau BGeometrics : {e}")),
+        }
+    }
 
-            for _ in 0..40 {
+    fn bg_disk_path(&self, key: &str) -> Option<PathBuf> {
+        Some(
+            self.cache_dir
+                .as_ref()?
+                .join("bgeometrics")
+                .join(format!("{key}.json")),
+        )
+    }
+
+    fn read_bg_disk(&self, key: &str) -> Option<BgSeries> {
+        let v: Value =
+            serde_json::from_str(&std::fs::read_to_string(self.bg_disk_path(key)?).ok()?).ok()?;
+        let rows = v["rows"]
+            .as_array()?
+            .iter()
+            .filter_map(|r| r.as_object().cloned())
+            .collect::<Vec<_>>();
+        Some(BgSeries {
+            endpoint: v["endpoint"].as_str()?.to_string(),
+            fetched: DateTime::from_timestamp(v["fetched"].as_i64()?, 0)?,
+            rows,
+            stale: false,
+        })
+    }
+
+    fn write_bg_disk(&self, key: &str, series: &BgSeries) {
+        let Some(path) = self.bg_disk_path(key) else {
+            return;
+        };
+        let v = serde_json::json!({"endpoint": series.endpoint, "fetched": series.fetched.timestamp(), "rows": series.rows});
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        // Écriture atomique : un fichier à moitié écrit ne doit pas remplacer le cache.
+        let tmp = path.with_extension("tmp");
+        if std::fs::write(&tmp, v.to_string()).is_ok() {
+            let _ = std::fs::rename(tmp, path);
+        }
+    }
+
+    /// Historique journalier OKX d'un contrat perpétuel `<PAIRE>-USDT-SWAP` :
+    /// `kind` vaut `long-short-account-ratio-contract` (ratio de comptes) ou
+    /// `open-interest-history` (contrats, actif de base, USD).
+    pub async fn okx_history(
+        &self,
+        kind: &str,
+        pair: &str,
+    ) -> Result<Arc<Vec<(NaiveDate, Vec<f64>)>>, String> {
+        let pair = pair.to_uppercase();
+        self.cached(&format!("okx:{kind}:{pair}"), HOUR, || async {
+            let url = format!("{}{kind}", okx::BASE_URL);
+            let inst = okx::inst_id(&pair);
+            let mut all: Vec<(i64, NaiveDate, Vec<f64>)> = Vec::new();
+            let mut end: Option<i64> = None;
+            // 100 points par page : jusqu'à ~3 ans d'historique journalier.
+            for page in 0..12 {
+                if page > 0 {
+                    tokio::time::sleep(Duration::from_millis(250)).await; // limite OKX : 5 requêtes / 2 s
+                }
+                let mut query = vec![
+                    ("instId", inst.clone()),
+                    ("period", "1D".into()),
+                    ("limit", okx::PAGE_SIZE.to_string()),
+                ];
+                if let Some(e) = end {
+                    query.push(("end", e.to_string()));
+                }
                 let resp = self
                     .http
-                    .get(format!("{DUNE_API_URL}/execution/{execution_id}/results"))
-                    .header("X-Dune-API-Key", &api_key)
+                    .get(&url)
+                    .query(&query)
                     .send()
-                    .await;
-                if let Ok(resp) = resp {
-                    if resp.status().is_success() {
-                        let v: Value = resp.json().await.unwrap_or(Value::Null);
-                        match v["state"].as_str() {
-                            Some("QUERY_STATE_COMPLETED") => return dune::rows_from_json(&v),
-                            Some("QUERY_STATE_FAILED") | Some("QUERY_STATE_CANCELLED") => {
-                                return Err("La requête Dune a échoué.".into())
-                            }
-                            _ => {}
-                        }
-                    }
+                    .await
+                    .map_err(|e| format!("Erreur réseau OKX : {e}"))?;
+                let status = resp.status().as_u16();
+                let body: Value = resp
+                    .json()
+                    .await
+                    .map_err(|e| format!("Réponse OKX illisible (HTTP {status}) : {e}"))?;
+                let rows = okx::parse_rows(&body)?;
+                let count = rows.len();
+                let Some(oldest) = rows.first().map(|r| r.0) else {
+                    break;
+                };
+                all.extend(rows);
+                if count < okx::PAGE_SIZE || end == Some(oldest) {
+                    break;
                 }
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                end = Some(oldest);
             }
-            Err("Délai dépassé lors de l'exécution de la requête Dune.".into())
+            all.sort_by_key(|r| r.0);
+            all.dedup_by_key(|r| r.1);
+            if all.is_empty() {
+                return Err(format!("Aucune donnée OKX pour {inst}."));
+            }
+            Ok(all.into_iter().map(|(_, d, v)| (d, v)).collect())
         })
         .await
     }
@@ -445,8 +585,8 @@ pub fn parse_fear_greed(v: &Value) -> Result<Vec<(NaiveDate, f64)>, String> {
     let mut out: Vec<(NaiveDate, f64)> = data
         .iter()
         .filter_map(|d| {
-            let ts = dune::value_as_f64(&d["timestamp"])? as i64;
-            let value = dune::value_as_f64(&d["value"])?;
+            let ts = table::value_as_f64(&d["timestamp"])? as i64;
+            let value = table::value_as_f64(&d["value"])?;
             Some((DateTime::from_timestamp(ts, 0)?.date_naive(), value.trunc()))
         })
         .collect();
@@ -595,6 +735,36 @@ mod tests {
             assert_eq!(parse_flexible_date(s), Some(d), "{s}");
         }
         assert_eq!(parse_flexible_date("n/a"), None);
+    }
+
+    #[tokio::test]
+    async fn bgeometrics_uses_fresh_disk_cache_without_network() {
+        let dir = std::env::temp_dir().join(format!("dashboard-crypto-bg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let data = DataProvider::new(Config::new(dir.join("config.ini")))
+            .with_cache_dir(dir.join("cache"));
+        let rows = vec![
+            json!({"d": "2024-01-01", "unixTs": 1704067200, "nrpl": 5.0})
+                .as_object()
+                .unwrap()
+                .clone(),
+        ];
+        let series = BgSeries {
+            endpoint: "nrpl-usd".into(),
+            rows,
+            fetched: Utc::now(),
+            stale: false,
+        };
+        data.write_bg_disk("nrpl", &series);
+
+        let got = data.bgeometrics("nrpl").await.unwrap();
+        assert_eq!(
+            got.endpoint, "nrpl-usd",
+            "le nom d'endpoint retenu est mémorisé"
+        );
+        assert!(!got.stale && got.stale_notice().is_none());
+        assert_eq!(got.rows.len(), 1);
+        assert!(data.bgeometrics("inconnue").await.is_err());
     }
 
     #[test]

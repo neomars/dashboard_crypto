@@ -125,10 +125,3 @@ pub async fn render(
         other => Err(format!("Indicateur inconnu : {other}")),
     }
 }
-
-/// Clôtures BTC indexées par date, pour les jointures avec les données Dune.
-pub(crate) fn close_by_date(
-    candles: &[crate::series::Candle],
-) -> std::collections::HashMap<chrono::NaiveDate, f64> {
-    candles.iter().map(|c| (c.date, c.close)).collect()
-}
