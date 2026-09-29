@@ -1,61 +1,120 @@
 name: Build
 
-# Produit le paquet Debian de l'application (dashboard-crypto_<version>_all.deb),
-# l'installe sur le runner pour vérifier qu'il démarre, puis le publie.
+# Vérifie le code (format, clippy, tests) puis construit le paquet Debian de
+# l'application (dashboard-crypto_<version>_amd64.deb), l'installe sur le
+# runner pour vérifier qu'il démarre, et le publie.
 #
 # Lancement : pousser un tag `v*` pour une vraie release, ou manuellement via
-# « Run workflow » (onglet Actions) pour tester un build sans tag.
+# « Run workflow » (onglet Actions) pour tester un build sans tag. Les tests
+# tournent aussi sur chaque pull request.
 #
-# La version vient du tag : pousser v1.2.0 construit la version 1.2.0. Un
-# lancement manuel peut recevoir une version ; sinon celle du fichier VERSION.
+# La version vient du tag : pousser v2.1.0 construit la version 2.1.0. Un
+# lancement manuel peut recevoir une version ; sinon celle des fichiers du dépôt.
 
 on:
+  pull_request:
   push:
     tags:
       - "v*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Version à construire (ex. 1.2.0). Vide = contenu du fichier VERSION."
+        description: "Version à construire (ex. 2.1.0). Vide = version des fichiers du dépôt."
         required: false
         default: ""
 
 jobs:
-  build-deb:
+  test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Tests unitaires
+      - name: Dépendances système (WebKitGTK pour Tauri)
         run: |
-          pip install -r requirements-dev.txt
-          pytest -q
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-3-dev libsoup-3.0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2.9.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # L'application embarque ui/ à la compilation : Plotly.js doit y être copié.
+      - name: Dépendances npm
+        run: npm ci && npm run vendor
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+  build-deb:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-3-dev libsoup-3.0-dev patchelf file xvfb
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2.9.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
 
       # Passée par l'environnement et non inlinée dans le script, pour qu'une
       # saisie manuelle ne puisse pas injecter de commande shell.
-      - name: Construire le paquet
+      - name: Fixer la version depuis le tag
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
         env:
           VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.version }}
-        run: packaging/debian/build_deb.sh $VERSION
+        run: node scripts/set-version.mjs "$VERSION"
 
+      - name: Construire le paquet
+        run: npm run build
+
+      # Tauri nomme le paquet d'après le nom affiché (« Dashboard Crypto_2.0.0_amd64.deb ») :
+      # nom sans espace pour des liens de téléchargement propres.
+      - name: Nom de fichier ASCII
+        run: |
+          cd target/release/bundle/deb
+          for f in *.deb; do mv "$f" "dashboard-crypto_${f#Dashboard Crypto_}"; done
+          ls
+
+      # Installe le paquet puis lance l'application quelques secondes sous un
+      # écran virtuel : elle doit toujours tourner (pas de plantage au démarrage).
       - name: Tester l'installation du paquet
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ./dist/*.deb
-          dashboard-crypto --check
+          sudo apt-get install -y ./target/release/bundle/deb/*.deb
+          test -f "/usr/share/applications/Dashboard Crypto.desktop"
+          xvfb-run -a timeout 15 dashboard-crypto || status=$?
+          test "${status:-0}" -eq 124
 
-      - name: Publier l'artefact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: dashboard-crypto-deb
-          path: dist/*.deb
+          path: target/release/bundle/deb/*.deb
           if-no-files-found: error
 
   # Uniquement sur un vrai tag `v*` : publie le .deb dans une Release GitHub
@@ -66,7 +125,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - uses: actions/download-artifact@v4
         with:

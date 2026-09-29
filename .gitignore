@@ -1,6 +1,6 @@
-__pycache__/
-*.log
-venv/
-.streamlit/
+node_modules/
+target/
+ui/vendor/
+src-tauri/gen/
 config.ini
-dist/
+*.log

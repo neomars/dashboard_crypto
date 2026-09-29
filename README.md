@@ -1,10 +1,12 @@
 # Dashboard d'Indicateurs Crypto et Financiers
 
-Ce projet est une application interactive basée sur **Streamlit** permettant de visualiser divers indicateurs du marché Bitcoin et des marchés financiers.
+Application de bureau (Linux Debian / Ubuntu) permettant de visualiser divers indicateurs du marché Bitcoin et des marchés financiers.
+
+Écrite en **Rust** avec [Tauri](https://tauri.app) : le cœur (`core/`) récupère les données et calcule les indicateurs, l'interface (`ui/`) les affiche avec Plotly.js dans une fenêtre native. La version 1.x était une application Python/Streamlit ; elle reste disponible dans l'historique git.
 
 ## Fonctionnalités
 
-L'application propose une interface de navigation latérale pour choisir parmi les indicateurs suivants :
+L'application propose une barre de navigation latérale pour choisir parmi les outils suivants :
 
 1.  **Indice Fear & Greed** : Visualisation du sentiment de marché corrélé au prix du Bitcoin.
 2.  **Bitcoin Halving** : Analyse des cycles de halving avec identification des sommets et des creux de cycle.
@@ -67,64 +69,40 @@ Plus la moyenne des corrections et la correction la plus forte diminuent d’un 
 *   **Cycle 2022-2025** (en cours) : Moyenne (19.0%), Max (15.0%)
 Cela montre une nette réduction de l’amplitude des corrections au fil des cycles.
 
-## Installation sur Debian / Ubuntu (application)
+## Installation sur Debian / Ubuntu
 
-Un paquet `.deb` est publié dans les [Releases](https://github.com/neomars/dashboard_crypto/releases) du dépôt : `dashboard-crypto_<version>_all.deb` (Debian 12+, Ubuntu 22.04+, Mint…).
+Un paquet `.deb` est publié dans les [Releases](https://github.com/neomars/dashboard_crypto/releases) du dépôt : `dashboard-crypto_<version>_amd64.deb` (Debian 12+, Ubuntu 22.04+, Mint 21+…, 64 bits).
 
-```bash
-sudo apt install ./dashboard-crypto_<version>_all.deb
-```
-
-- L'installation crée l'environnement Python de l'application dans `/opt/dashboard-crypto/venv` : **une connexion Internet est nécessaire** pendant l'installation (quelques minutes).
-- **Dashboard Crypto** apparaît ensuite dans le menu des applications. Elle s'ouvre dans sa propre fenêtre ; fermer la fenêtre arrête l'application.
-- En ligne de commande : `dashboard-crypto` (fenêtre native), `dashboard-crypto --browser` (dans le navigateur par défaut).
-- La configuration (clé API Dune, IDs de requêtes) est enregistrée dans `~/.config/dashboard-crypto/config.ini`, le journal du serveur dans `~/.cache/dashboard-crypto/streamlit.log`.
-- Mise à jour : installez simplement le nouveau `.deb` par-dessus. Désinstallation : `sudo apt remove dashboard-crypto`.
-
-### Construire le paquet soi-même
+Double-cliquez sur le fichier pour l'ouvrir dans votre gestionnaire de logiciels, ou en ligne de commande :
 
 ```bash
-packaging/debian/build_deb.sh          # version lue dans le fichier VERSION
-packaging/debian/build_deb.sh 1.2.0    # version explicite
+sudo apt install ./dashboard-crypto_<version>_amd64.deb
 ```
 
-Le paquet est créé dans `dist/`. Le workflow GitHub `Build` fait la même chose automatiquement : pousser un tag `v1.2.0` construit la version 1.2.0, vérifie que le paquet s'installe et démarre, puis la publie dans une Release. Il peut aussi être lancé manuellement depuis l'onglet Actions.
+- **Dashboard Crypto** apparaît ensuite dans le menu des applications (commande : `dashboard-crypto`).
+- Aucune connexion n'est nécessaire à l'installation ; l'application a besoin d'Internet pour récupérer les données de marché.
+- Mise à jour : installez le nouveau `.deb` par-dessus l'ancien. Il remplace aussi l'ancienne version Python (1.x), dont la configuration est reprise.
+- Désinstallation : `sudo apt remove dashboard-crypto`.
 
-## Installation depuis les sources
+## Configuration
 
-### 1. Prérequis
-Assurez-vous d'avoir Python 3.8+ installé.
+### Clé API Dune
 
-### 2. Cloner le dépôt
-```bash
-git clone <votre-repo>
-cd <votre-repo>
+Les indicateurs basés sur Dune Analytics (SOPR, Institutional Holding, Long/Short, Realized Cap UTXO, Net Realized Profit/Loss) nécessitent une clé API gratuite ([dune.com](https://dune.com)). Saisissez-la sur la page **Accueil**, section **Configuration**.
+
+Elle est enregistrée dans `~/.config/dashboard-crypto/config.ini` (emplacement modifiable avec la variable `DASHBOARD_CRYPTO_CONFIG`) :
+
+```ini
+[DUNE]
+api_key = VOTRE_CLE_API_ICI
 ```
 
-### 3. Installer les dépendances
-```bash
-pip install -r requirements.txt
-```
+### IDs des requêtes Dune
 
-### 4. Configuration de l'API Dune
-Les indicateurs basés sur Dune Analytics (SOPR, Institutional Holding, Long/Short Whale) nécessitent une clé API.
+Les requêtes Dune utilisées ont des IDs par défaut, modifiables sans toucher au code, par ordre de priorité :
 
-Vous pouvez configurer cette clé de deux manières :
-1.  **Via l'interface** : Dans la barre latérale, sous la section **Configuration**, dépliez "API Dune Analytics" pour saisir et sauvegarder votre clé.
-2.  **Via le fichier `config.ini`** : Créez un fichier nommé `config.ini` à la racine du projet et ajoutez-y vos informations :
-    ```ini
-    [DUNE]
-    api_key = VOTRE_CLE_API_ICI
-    ```
-
-*Note : Vous pouvez obtenir une clé gratuite sur [dune.com](https://dune.com). Le fichier `config.ini` est ignoré par git pour protéger votre clé.*
-
-### 5. Configuration avancée : IDs des requêtes Dune
-
-Les IDs des requêtes Dune (SOPR, Institutional Holding, Long/Short, Realized Cap UTXO, Net Realized Profit/Loss) ont des valeurs par défaut codées en dur (sauf Net Realized Profit/Loss), mais sont surchargeables sans modifier le code, par ordre de priorité :
-
-1. Variable d'environnement `DUNE_QUERY_<NOM>` (ex : `DUNE_QUERY_SOPR=1234567`)
-2. Section `[DUNE_QUERIES]` du fichier `config.ini` :
+1. Variable d'environnement `DUNE_QUERY_<NOM>` (ex : `DUNE_QUERY_SOPR=1234567`) ;
+2. Page **Accueil** → **IDs des requêtes Dune**, ou section `[DUNE_QUERIES]` de `config.ini` :
    ```ini
    [DUNE_QUERIES]
    sopr = 1234567
@@ -137,51 +115,42 @@ Les IDs des requêtes Dune (SOPR, Institutional Holding, Long/Short, Realized Ca
 
 **Net Realized Profit / Loss** n'a pas de requête par défaut : créez une nouvelle requête sur [dune.com](https://dune.com) en y collant le SQL de [`dune_queries/net_realized_pnl.sql`](dune_queries/net_realized_pnl.sql), exécutez-la, puis renseignez son ID sous la clé `net_realized_pnl`. La requête doit renvoyer une colonne de date (`week`, `day`, `date`…) et soit deux colonnes profit/perte, soit une colonne nette ; les montants sont regroupés par semaine.
 
-## Utilisation
+## Développement
 
-### Lancement automatique (Recommandé)
-Un script de lancement est disponible pour activer l'environnement et lancer l'application d'un coup :
-```bash
-./start_app.sh
-```
+### Prérequis
 
-### Lancement manuel
-Si vous préférez lancer l'application manuellement :
-```bash
-source btc_env/bin/activate
-streamlit run app.py
-```
+- [Rust](https://rustup.rs) (stable) et [Node.js](https://nodejs.org) 20+ (uniquement pour l'outil Tauri et Plotly.js) ;
+- les bibliothèques système de Tauri :
+  ```bash
+  sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-3-dev libsoup-3.0-dev build-essential curl file patchelf
+  ```
 
-L'interface s'ouvrira automatiquement dans votre navigateur par défaut (généralement à l'adresse `http://localhost:8501`).
-
-## Tests
-
-Le projet inclut une suite de tests unitaires (`pytest`) couvrant la logique de calcul pure (simulateur de levier, détection de corrections BMI, régime BMSB, volatilité VCR, gestion d'erreurs Dune).
+### Commandes
 
 ```bash
-pip install -r requirements-dev.txt
-pytest
+npm install          # outil Tauri + Plotly.js
+npm run dev          # lance l'application en mode développement
+npm run build        # construit le paquet : target/release/bundle/deb/
+cargo test --workspace   # tests (après un premier `npm run vendor`)
 ```
 
-## Structure du Projet
+Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / Dune / Fear & Greed, le rapport PDF, et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
 
-- `app.py` : Point d'entrée principal de l'application Streamlit.
-- `data_provider.py` : Fonctions partagées d'accès aux données (Yahoo Finance, Dune Analytics, historique BTC combiné, estimation du prochain halving) — centralise la logique commune à la majorité des indicateurs.
-- `config_manager.py` : Lecture/écriture de `config.ini` (clé API Dune, IDs de requêtes Dune configurables).
-- `btc_fear_greed.py` : Logique de l'indicateur Fear & Greed.
-- `btc_halving.py` : Analyse des cycles de halving.
-- `onchain_indicator.py` : Métriques On-chain (SMA 200, Pi Cycle, etc.).
-- `cycle_indicator.py` : Graphique polaire du cycle de 4 ans (Plotly).
-- `sth_sopr.py` : Récupération et visualisation des données SOPR via Dune.
-- `investment_simulator.py` : Logique et graphique du simulateur d'investissement. Inclut une règle "no-loss" qui reporte les sorties si le prix est inférieur au prix d'achat.
-- `vcr_indicator.py` : Logique de l'indicateur de compression de volatilité.
-- `bmi_indicator.py` : Logique de l'indice de maturation du Bitcoin.
-- `btc_institutional.py` : Visualisation des holdings institutionnels.
-- `btc_volume.py` : Indicateur de prix et volume coloré.
-- `bmsb_indicator.py` : Bear Market Support Band (Benjamin Cowen).
-- `long_short_whale.py` : Analyse des positions Long/Short sur GMX V2 via Dune Analytics.
-- `cycle_roi_indicator.py` : Comparaison des trajectoires de ROI post-top de cycle.
-- `realized_cap_utxo.py` : Répartition du Realized Cap par ancienneté des UTXO via Dune Analytics.
-- `net_realized_pnl.py` : Profit/perte réalisés par semaine en bulles sur le prix BTC (requête Dune : `dune_queries/net_realized_pnl.sql`).
-- `packaging/debian/` : Paquet Debian (script de construction, lanceur en fenêtre native, entrée de menu, icône).
-- `tests/` : Suite de tests unitaires `pytest`.
+### Publier une version
+
+Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/set-version.mjs`), lance les tests, construit le `.deb`, vérifie qu'il s'installe et démarre, puis le publie dans une Release. Il peut aussi être lancé manuellement depuis l'onglet Actions.
+
+## Structure du projet
+
+- `core/` : bibliothèque Rust sans interface.
+  - `data.rs` : accès aux données (Yahoo Finance, historique BTC 2010-2018, Fear & Greed, mempool.space, Dune Analytics) avec cache mémoire.
+  - `dune.rs` : gestion d'erreur et lecture souple des colonnes des réponses Dune.
+  - `indicators/` : un module par indicateur, chacun produisant une figure Plotly (JSON).
+  - `simulator.rs` : simulateur de levier dynamique (règle « no-loss », liquidation, export CSV).
+  - `pdf.rs` : rapport PDF de simulation.
+  - `config.rs` : lecture/écriture de `config.ini`.
+  - `indicators.json` : liste des outils affichés dans la barre latérale.
+- `src-tauri/` : application de bureau (commandes appelées par l'interface, configuration du paquet).
+- `ui/` : interface (HTML/CSS/JavaScript, sans étape de compilation).
+- `dune_queries/` : SQL de référence des requêtes Dune à créer soi-même.
+- `scripts/` : copie de Plotly.js dans `ui/vendor/`, changement de version.
