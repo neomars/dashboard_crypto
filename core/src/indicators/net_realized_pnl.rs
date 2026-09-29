@@ -2,89 +2,36 @@
 //!
 //! Chaque semaine, une bulle verte (profit net) ou rouge (perte nette) est
 //! placée sur le prix BTC, avec une taille proportionnelle au montant net
-//! réalisé. Les données viennent d'une requête Dune (SQL de référence :
-//! `dune_queries/net_realized_pnl.sql`) dont l'ID se configure sous la clé
-//! `net_realized_pnl`.
+//! réalisé. Données : NRPL journalier de BGeometrics, cumulé par semaine.
 
 use super::{IndicatorOutput, Level};
+use crate::bgeometrics;
 use crate::data::DataProvider;
-use crate::dune::{self, Row};
 use crate::figure::Figure;
 use crate::series::{fmt_date, week_start, Candle};
 use chrono::NaiveDate;
 use serde_json::json;
 use std::collections::BTreeMap;
 
-const TIME_COLUMNS: [&str; 5] = ["week", "time", "date", "day", "block_time"];
 const MIN_BUBBLE: f64 = 6.0;
 const MAX_BUBBLE: f64 = 40.0;
-
-pub const NOT_CONFIGURED: &str = "Aucune requête Dune configurée pour cet indicateur. Créez une requête sur dune.com avec le SQL \
-de dune_queries/net_realized_pnl.sql, puis renseignez son ID dans la configuration (onglet Accueil) ou dans config.ini \
-(section [DUNE_QUERIES], clé net_realized_pnl), ou via la variable d'environnement DUNE_QUERY_NET_REALIZED_PNL.";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeeklyPnl {
     pub week: NaiveDate,
-    pub profit: f64,
-    pub loss: f64,
+    pub net: f64,
 }
 
-impl WeeklyPnl {
-    pub fn net(&self) -> f64 {
-        self.profit - self.loss
+/// Somme des valeurs journalières par semaine (commençant le lundi).
+pub fn weekly_net_realized(daily: &[(NaiveDate, f64)]) -> Vec<WeeklyPnl> {
+    let mut weeks: BTreeMap<NaiveDate, f64> = BTreeMap::new();
+    for (date, value) in daily {
+        *weeks.entry(week_start(*date)).or_default() += value;
     }
-}
-
-/// Regroupe les lignes Dune par semaine (commençant le lundi).
-///
-/// Accepte soit des colonnes profit/perte séparées (perte signée ou non), soit
-/// une seule colonne nette.
-pub fn weekly_net_realized(rows: &[Row]) -> Result<Vec<WeeklyPnl>, String> {
-    let cols = dune::columns(rows);
-    let time_col = TIME_COLUMNS
-        .iter()
-        .find(|c| cols.iter().any(|k| k == *c))
-        .ok_or_else(|| format!("Aucune colonne temporelle trouvée. Colonnes dispos : {cols:?}"))?;
-    let lower = |c: &String| c.to_lowercase();
-    let profit_col = cols.iter().find(|c| {
-        let l = lower(c);
-        l.contains("profit") && !l.contains("loss") && !l.contains("net")
-    });
-    let loss_col = cols.iter().find(|c| {
-        let l = lower(c);
-        l.contains("loss") && !l.contains("profit") && !l.contains("net")
-    });
-    let net_col = cols.iter().find(|c| lower(c).contains("net"));
-
-    let mut weeks: BTreeMap<NaiveDate, (f64, f64)> = BTreeMap::new();
-    for row in rows {
-        let Some(date) = dune::date(row, time_col) else {
-            continue;
-        };
-        let (profit, loss) = match (profit_col, loss_col, net_col) {
-            (Some(p), Some(l), _) => (
-                dune::num(row, p).unwrap_or(0.0),
-                dune::num(row, l).unwrap_or(0.0).abs(),
-            ),
-            (_, _, Some(n)) => {
-                let net = dune::num(row, n).unwrap_or(0.0);
-                (net.max(0.0), (-net).max(0.0))
-            }
-            _ => {
-                return Err(format!(
-                    "Colonnes profit/perte introuvables. Colonnes dispos : {cols:?}"
-                ))
-            }
-        };
-        let e = weeks.entry(week_start(date)).or_default();
-        e.0 += profit;
-        e.1 += loss;
-    }
-    Ok(weeks
+    weeks
         .into_iter()
-        .map(|(week, (profit, loss))| WeeklyPnl { week, profit, loss })
-        .collect())
+        .map(|(week, net)| WeeklyPnl { week, net })
+        .collect()
 }
 
 /// Taille de bulle proportionnelle à la racine de |valeur| (aire ∝ montant).
@@ -99,17 +46,19 @@ pub fn bubble_sizes(values: &[f64], min_size: f64, max_size: f64) -> Vec<f64> {
         .collect()
 }
 
-fn format_usd(value: f64) -> String {
+/// Montant lisible, en dollars ou en bitcoins selon l'unité de la série.
+fn format_amount(value: f64, btc: bool) -> String {
     let abs = value.abs();
-    for (threshold, suffix) in [(1e9, "Md"), (1e6, "M"), (1e3, "k")] {
+    let unit = if btc { " BTC" } else { " $" };
+    for (threshold, suffix) in [(1e9, " Md"), (1e6, " M"), (1e3, " k")] {
         if abs >= threshold {
-            return format!("{:.2} {suffix}$", value / threshold);
+            return format!("{:.2}{suffix}{unit}", value / threshold);
         }
     }
-    format!("{value:.0} $")
+    format!("{value:.0}{unit}")
 }
 
-pub(crate) fn build_figure(weekly: &[WeeklyPnl], daily: &[Candle]) -> Figure {
+pub(crate) fn build_figure(weekly: &[WeeklyPnl], daily: &[Candle], btc_unit: bool) -> Figure {
     // Clôture de fin de semaine (dernier jour disponible), indexée par le lundi.
     let mut week_close: BTreeMap<NaiveDate, f64> = BTreeMap::new();
     for c in daily {
@@ -120,7 +69,7 @@ pub(crate) fn build_figure(weekly: &[WeeklyPnl], daily: &[Candle]) -> Figure {
         .filter_map(|w| Some((w, *week_close.get(&w.week)?)))
         .collect();
     let sizes = bubble_sizes(
-        &points.iter().map(|(w, _)| w.net()).collect::<Vec<_>>(),
+        &points.iter().map(|(w, _)| w.net).collect::<Vec<_>>(),
         MIN_BUBBLE,
         MAX_BUBBLE,
     );
@@ -151,13 +100,20 @@ pub(crate) fn build_figure(weekly: &[WeeklyPnl], daily: &[Candle]) -> Figure {
         ),
     ] {
         let idx: Vec<usize> = (0..points.len())
-            .filter(|&i| (points[i].0.net() >= 0.0) == positive)
+            .filter(|&i| (points[i].0.net >= 0.0) == positive)
             .collect();
-        let text: Vec<String> = idx.iter().map(|&i| {
-            let (w, price) = points[i];
-            format!("Semaine du {}<br>Prix : {:.0} $<br>Profit réalisé : {}<br>Perte réalisée : {}<br><b>Net : {}</b>",
-                w.week.format("%d/%m/%Y"), price, format_usd(w.profit), format_usd(w.loss), format_usd(w.net()))
-        }).collect();
+        let text: Vec<String> = idx
+            .iter()
+            .map(|&i| {
+                let (w, price) = points[i];
+                format!(
+                    "Semaine du {}<br>Prix : {:.0} $<br><b>Net réalisé : {}</b>",
+                    w.week.format("%d/%m/%Y"),
+                    price,
+                    format_amount(w.net, btc_unit)
+                )
+            })
+            .collect();
         fig.trace(json!({"type": "scatter", "mode": "markers", "name": label,
             "x": idx.iter().map(|&i| fmt_date(points[i].0.week)).collect::<Vec<_>>(),
             "y": idx.iter().map(|&i| points[i].1).collect::<Vec<_>>(),
@@ -168,31 +124,19 @@ pub(crate) fn build_figure(weekly: &[WeeklyPnl], daily: &[Candle]) -> Figure {
 }
 
 pub async fn render(data: &DataProvider) -> Result<IndicatorOutput, String> {
-    let query_id = data.config().dune_query_id("net_realized_pnl", "");
-    if query_id.is_empty() {
-        return Err(NOT_CONFIGURED.into());
-    }
-    let rows = data.dune_results(&query_id).await?;
-    if rows.is_empty() {
-        return Err("Aucune donnée retournée par la requête Dune.".into());
-    }
-    let weekly = weekly_net_realized(&rows)?;
-    let start = weekly
-        .first()
-        .ok_or("Aucune date valide dans les données Dune.")?
-        .week;
-    let daily = data
+    let nrpl = data.bgeometrics("nrpl").await?;
+    let (column, daily_net) = bgeometrics::single_series(&nrpl.rows)?;
+    let weekly = weekly_net_realized(&daily_net);
+    let start = weekly.first().ok_or("Aucune donnée NRPL.")?.week;
+    let prices = data
         .ticker_range("BTC-USD", Some(start), None)
         .await
         .map_err(|e| format!("Impossible de récupérer les prix BTC. {e}"))?;
-    let out = IndicatorOutput::from(build_figure(&weekly, &daily));
-    Ok(if weekly.len() < 4 {
-        out.with_notice(
-            Level::Warning,
-            "Moins de 4 semaines de données : vérifiez la requête Dune.",
-        )
-    } else {
-        out
+    let btc_unit = column.to_lowercase().contains("btc");
+    let out = IndicatorOutput::from(build_figure(&weekly, &prices, btc_unit));
+    Ok(match nrpl.stale_notice() {
+        Some(n) => out.with_notice(Level::Warning, n),
+        None => out,
     })
 }
 
@@ -200,71 +144,35 @@ pub async fn render(data: &DataProvider) -> Result<IndicatorOutput, String> {
 mod tests {
     use super::*;
     use crate::data::parse_ymd as d;
-    use serde_json::json;
-
-    fn rows(v: serde_json::Value) -> Vec<Row> {
-        v.as_array()
-            .unwrap()
-            .iter()
-            .map(|r| r.as_object().unwrap().clone())
-            .collect()
-    }
 
     #[test]
-    fn weekly_aggregation_from_profit_and_loss_columns() {
-        let r = rows(json!([
-            {"day": "2024-01-01", "realized_profit_usd": 100.0, "realized_loss_usd": -20.0},
-            {"day": "2024-01-03", "realized_profit_usd": 50.0, "realized_loss_usd": -30.0},
-            {"day": "2024-01-08", "realized_profit_usd": 10.0, "realized_loss_usd": 40.0}
-        ]));
-        let w = weekly_net_realized(&r).unwrap();
+    fn daily_values_are_summed_per_monday_week() {
+        let daily = [
+            (d("2024-01-01"), 100.0),
+            (d("2024-01-07"), -30.0),
+            (d("2024-01-08"), -40.0),
+        ];
         assert_eq!(
-            w,
+            weekly_net_realized(&daily),
             vec![
                 WeeklyPnl {
                     week: d("2024-01-01"),
-                    profit: 150.0,
-                    loss: 50.0
+                    net: 70.0
                 },
                 WeeklyPnl {
                     week: d("2024-01-08"),
-                    profit: 10.0,
-                    loss: 40.0
-                },
+                    net: -40.0
+                }
             ]
-        );
-        assert_eq!(w[1].net(), -30.0);
-    }
-
-    #[test]
-    fn single_net_column_is_split() {
-        let r = rows(json!([
-            {"week": "2024-01-01 00:00:00.000 UTC", "net_realized_pnl": 25.0},
-            {"week": "2024-01-08 00:00:00.000 UTC", "net_realized_pnl": "-5"}
-        ]));
-        let w = weekly_net_realized(&r).unwrap();
-        assert_eq!(
-            (w[0].profit, w[0].loss, w[1].profit, w[1].loss),
-            (25.0, 0.0, 0.0, 5.0)
-        );
-    }
-
-    #[test]
-    fn missing_columns_are_explained() {
-        assert!(weekly_net_realized(&rows(json!([{"profit": 1}])))
-            .unwrap_err()
-            .contains("temporelle"));
-        assert!(
-            weekly_net_realized(&rows(json!([{"week": "2024-01-01", "foo": 1}])))
-                .unwrap_err()
-                .contains("profit/perte")
         );
     }
 
     #[test]
     fn bubble_sizes_scale_with_magnitude() {
-        let s = bubble_sizes(&[0.0, 100.0, -400.0], 5.0, 25.0);
-        assert_eq!(s, vec![5.0, 15.0, 25.0]);
+        assert_eq!(
+            bubble_sizes(&[0.0, 100.0, -400.0], 5.0, 25.0),
+            vec![5.0, 15.0, 25.0]
+        );
         assert_eq!(bubble_sizes(&[0.0, 0.0], 5.0, 25.0), vec![5.0, 5.0]);
     }
 
@@ -273,13 +181,11 @@ mod tests {
         let weekly = vec![
             WeeklyPnl {
                 week: d("2024-01-01"),
-                profit: 10.0,
-                loss: 0.0,
+                net: 10.0,
             },
             WeeklyPnl {
                 week: d("2024-01-08"),
-                profit: 0.0,
-                loss: 5.0,
+                net: -5.0,
             },
         ];
         let daily: Vec<Candle> = (0..14)
@@ -295,16 +201,17 @@ mod tests {
                 }
             })
             .collect();
-        let fig = build_figure(&weekly, &daily);
+        let fig = build_figure(&weekly, &daily, false);
         assert_eq!(fig.data[1]["x"], json!(["2024-01-01"]));
         assert_eq!(fig.data[1]["y"], json!([7.0]), "clôture du dimanche");
         assert_eq!(fig.data[2]["y"], json!([14.0]));
     }
 
     #[test]
-    fn usd_formatting() {
-        assert_eq!(format_usd(2_500_000_000.0), "2.50 Md$");
-        assert_eq!(format_usd(-1_500_000.0), "-1.50 M$");
-        assert_eq!(format_usd(12.0), "12 $");
+    fn amount_formatting() {
+        assert_eq!(format_amount(2_500_000_000.0, false), "2.50 Md $");
+        assert_eq!(format_amount(-1_500_000.0, false), "-1.50 M $");
+        assert_eq!(format_amount(12.0, false), "12 $");
+        assert_eq!(format_amount(-2_500.0, true), "-2.50 k BTC");
     }
 }

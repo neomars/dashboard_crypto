@@ -12,17 +12,17 @@ L'application propose une barre de navigation latérale pour choisir parmi les o
 2.  **Bitcoin Halving** : Analyse des cycles de halving avec identification des sommets et des creux de cycle.
 3.  **Indicateurs On-chain** : Moyenne mobile 200 semaines (SMA), Pi Cycle Top, et Prix Réalisé (Realized Price).
 4.  **Cycle de 4 ans (Bitcoin)** : Graphique polaire interactif divisé en 4 années (quadrants), permettant de suivre la progression du prix par rapport au dernier halving.
-5.  **SOPR (LTH & STH)** : Analyse de la rentabilité des détenteurs à court (STH) et long terme (LTH) via l'API Dune Analytics.
+5.  **SOPR (STH & LTH)** : Rentabilité des pièces dépensées par les détenteurs à court (STH) et long terme (LTH), via BGeometrics.
 6.  **Simulateur d'Investissement** : Simulation d'une stratégie de levier dynamique (x1 -> x2 lors d'une baisse de x%) avec sortie progressive personnalisable (journalière, hebdomadaire ou mensuelle).
 7.  **BTC Price & Volume** : Graphique en chandeliers japonais (candlestick) avec volume coloré (vert pour les hausses, rouge pour les baisses).
 8.  **Volatility Compression Ratio (VCR)** : Mesure de la compression de volatilité (ratio 30j/365j) pour anticiper les mouvements explosifs.
 9.  **Bitcoin Cycle Correction Analysis** : Analyse comparative de la sévérité des corrections (>15%) pour chaque cycle de halving depuis 2010. Identifie les sommets (Tops) et les creux (Bottoms) historiques.
-10. **BTC Institutional Holding** : Visualisation de l'accumulation de Bitcoin par les institutionnels (ETFs Spot) corrélée au prix, via Dune Analytics.
+10. **BTC ETF Holdings** : Bitcoin détenus par les ETF spot, corrélés au prix, via BGeometrics.
 11. **Bear Market Support Band** : Indicateur de Benjamin Cowen combinant la SMA 20 semaines et l'EMA 21 semaines pour identifier les phases de marché.
-12. **Long/Short Positions (GMX V2)** : Analyse du sentiment de marché (Open Interest Long vs Short) sur les marchés perpétuels via Dune Analytics.
+12. **Long/Short Positions (OKX)** : Sentiment des traders sur les contrats perpétuels OKX (part des comptes long et short, ratio, open interest), avec le prix de l'actif superposé.
 13. **Bitcoin Market Cycle ROI** : Comparaison de la performance du Bitcoin (ROI) depuis les différents sommets (tops) de cycle historiques.
-14. **Realized Cap - UTXO Age Bands** : Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge, de moins d'un jour à plus de 10 ans) via Dune Analytics.
-15. **Net Realized Profit / Loss** : Profit et perte réalisés chaque semaine sur la blockchain, affichés en bulles sur le prix du Bitcoin (vert = profit net, rouge = perte nette, taille proportionnelle au montant), à la manière du graphique Glassnode « Profit Taking ». Permet de voir si une hausse s'accompagne d'une forte prise de profit ou non. Nécessite de créer la requête Dune fournie (voir [Configuration avancée](#5-configuration-avancée--ids-des-requêtes-dune)).
+14. **Realized Cap HODL Waves** : Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge, de moins d'un jour à plus de 10 ans), via BGeometrics.
+15. **Net Realized Profit / Loss** : Profit ou perte nets réalisés chaque semaine sur la blockchain, affichés en bulles sur le prix du Bitcoin (vert = profit net, rouge = perte nette, taille proportionnelle au montant), à la manière du graphique Glassnode « Profit Taking ». Permet de voir si une hausse s'accompagne d'une forte prise de profit ou non. Données : NRPL journalier de BGeometrics, cumulé par semaine.
 
 ### Calcul du Bitcoin Cycle Correction Analysis
 
@@ -81,39 +81,36 @@ sudo apt install ./dashboard-crypto_<version>_amd64.deb
 
 - **Dashboard Crypto** apparaît ensuite dans le menu des applications (commande : `dashboard-crypto`).
 - Aucune connexion n'est nécessaire à l'installation ; l'application a besoin d'Internet pour récupérer les données de marché.
-- Mise à jour : installez le nouveau `.deb` par-dessus l'ancien. Il remplace aussi l'ancienne version Python (1.x), dont la configuration est reprise.
+- Mise à jour : installez le nouveau `.deb` par-dessus l'ancien. Il remplace aussi l'ancienne version Python (1.x).
 - Désinstallation : `sudo apt remove dashboard-crypto`.
 
-## Configuration
+## Sources de données
 
-### Clé API Dune
+Toutes les données viennent d'API publiques et gratuites, **sans clé ni compte** :
 
-Les indicateurs basés sur Dune Analytics (SOPR, Institutional Holding, Long/Short, Realized Cap UTXO, Net Realized Profit/Loss) nécessitent une clé API gratuite ([dune.com](https://dune.com)). Saisissez-la sur la page **Accueil**, section **Configuration**.
+| Source | Données |
+|---|---|
+| [Yahoo Finance](https://finance.yahoo.com) | prix, volumes et historiques (BTC et tout ticker du simulateur) |
+| [BGeometrics](https://bitcoin-data.com) | métriques on-chain : STH/LTH-SOPR, NRPL, Realized Cap HODL Waves, BTC détenus par les ETF |
+| [OKX](https://www.okx.com) | ratio de comptes long/short et open interest des contrats perpétuels |
+| [alternative.me](https://alternative.me/crypto/fear-and-greed-index/) | indice Fear & Greed |
+| [mempool.space](https://mempool.space) | hauteur de bloc (estimation du prochain halving) |
+| [Bitcoin-Dataset](https://github.com/Yrzxiong/Bitcoin-Dataset) (GitHub) | historique du prix BTC 2010-2018 |
 
-Elle est enregistrée dans `~/.config/dashboard-crypto/config.ini` (emplacement modifiable avec la variable `DASHBOARD_CRYPTO_CONFIG`) :
+### Limites de BGeometrics
+
+L'offre gratuite de BGeometrics est limitée à **8 requêtes par heure et 15 par jour**, et couvre les **4 dernières années**. Ses métriques étant mises à jour une fois par jour, l'application garde chaque réponse **12 h sur le disque** (`~/.cache/dashboard-crypto/bgeometrics/`) : afficher les 4 indicateurs concernés coûte au plus 5 requêtes par demi-journée. Si l'API refuse une requête, les dernières données connues sont affichées, avec leur date.
+
+### Noms des endpoints BGeometrics
+
+Pour chaque métrique, l'application essaie une courte liste de noms d'endpoint connus et mémorise celui qui répond. Si un indicateur ne trouve pas ses données, indiquez le nom exact (visible dans la [documentation de l'API](https://bitcoin-data.com/api/redoc.html)) sur la page **Accueil**, section **Endpoints BGeometrics**. Il est enregistré dans `~/.config/dashboard-crypto/config.ini` (emplacement modifiable avec la variable `DASHBOARD_CRYPTO_CONFIG`) :
 
 ```ini
-[DUNE]
-api_key = VOTRE_CLE_API_ICI
+[BGEOMETRICS]
+etf = etf-btc-total
 ```
 
-### IDs des requêtes Dune
-
-Les requêtes Dune utilisées ont des IDs par défaut, modifiables sans toucher au code, par ordre de priorité :
-
-1. Variable d'environnement `DUNE_QUERY_<NOM>` (ex : `DUNE_QUERY_SOPR=1234567`) ;
-2. Page **Accueil** → **IDs des requêtes Dune**, ou section `[DUNE_QUERIES]` de `config.ini` :
-   ```ini
-   [DUNE_QUERIES]
-   sopr = 1234567
-   institutional = 2345678
-   long_short = 3456789
-   realized_cap_utxo = 4567890
-   net_realized_pnl = 5678901
-   ```
-3. Valeur par défaut intégrée au code.
-
-**Net Realized Profit / Loss** n'a pas de requête par défaut : créez une nouvelle requête sur [dune.com](https://dune.com) en y collant le SQL de [`dune_queries/net_realized_pnl.sql`](dune_queries/net_realized_pnl.sql), exécutez-la, puis renseignez son ID sous la clé `net_realized_pnl`. La requête doit renvoyer une colonne de date (`week`, `day`, `date`…) et soit deux colonnes profit/perte, soit une colonne nette ; les montants sont regroupés par semaine.
+Une variable d'environnement `BGEOMETRICS_<CLÉ>` (ex. `BGEOMETRICS_ETF=etf-btc`) est prioritaire. Clés : `sth_sopr`, `lth_sopr`, `etf`, `realized_cap_hodl_waves`, `nrpl`.
 
 ## Développement
 
@@ -134,7 +131,7 @@ npm run build        # construit le paquet : target/release/bundle/deb/
 cargo test --workspace   # tests (après un premier `npm run vendor`)
 ```
 
-Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / Dune / Fear & Greed, le rapport PDF, et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
+Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Fear & Greed, le cache disque, le rapport PDF, et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
 
 ### Publier une version
 
@@ -143,14 +140,14 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
 ## Structure du projet
 
 - `core/` : bibliothèque Rust sans interface.
-  - `data.rs` : accès aux données (Yahoo Finance, historique BTC 2010-2018, Fear & Greed, mempool.space, Dune Analytics) avec cache mémoire.
-  - `dune.rs` : gestion d'erreur et lecture souple des colonnes des réponses Dune.
+  - `data.rs` : accès aux données (Yahoo Finance, historique BTC 2010-2018, Fear & Greed, mempool.space, BGeometrics, OKX) avec cache mémoire, et cache disque pour BGeometrics.
+  - `bgeometrics.rs`, `okx.rs` : décodage des réponses de ces deux API.
+  - `table.rs` : lecture souple des colonnes des données tabulaires.
   - `indicators/` : un module par indicateur, chacun produisant une figure Plotly (JSON).
   - `simulator.rs` : simulateur de levier dynamique (règle « no-loss », liquidation, export CSV).
   - `pdf.rs` : rapport PDF de simulation.
-  - `config.rs` : lecture/écriture de `config.ini`.
+  - `config.rs` : lecture/écriture de `config.ini` (noms d'endpoint BGeometrics imposés).
   - `indicators.json` : liste des outils affichés dans la barre latérale.
 - `src-tauri/` : application de bureau (commandes appelées par l'interface, configuration du paquet).
 - `ui/` : interface (HTML/CSS/JavaScript, sans étape de compilation).
-- `dune_queries/` : SQL de référence des requêtes Dune à créer soi-même.
 - `scripts/` : copie de Plotly.js dans `ui/vendor/`, changement de version.

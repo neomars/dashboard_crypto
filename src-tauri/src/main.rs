@@ -6,21 +6,12 @@ use dashboard_core::config::Config;
 use dashboard_core::figure::Figure;
 use dashboard_core::indicators::{self, IndicatorOutput};
 use dashboard_core::simulator::{self, SimParams, Simulation, Summary, Trade};
-use dashboard_core::{pdf, DataProvider};
+use dashboard_core::{bgeometrics, pdf, DataProvider};
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::Mutex;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
-
-/// Requêtes Dune dont l'ID est modifiable depuis l'accueil (nom, valeur par défaut).
-const DUNE_QUERIES: [(&str, &str); 5] = [
-    ("sopr", "6764134"),
-    ("institutional", "3382000"),
-    ("long_short", "3089944"),
-    ("realized_cap_utxo", "7611528"),
-    ("net_realized_pnl", ""),
-];
 
 struct AppState {
     data: DataProvider,
@@ -128,17 +119,18 @@ async fn export_simulation(
 }
 
 #[derive(Serialize)]
-struct QuerySetting {
-    name: &'static str,
+struct EndpointSetting {
+    key: &'static str,
+    label: &'static str,
+    /// Nom imposé dans la configuration (vide = détection automatique).
     value: String,
-    default: &'static str,
+    candidates: &'static [&'static str],
 }
 
 #[derive(Serialize)]
 struct Settings {
     config_path: String,
-    dune_api_key: String,
-    queries: Vec<QuerySetting>,
+    endpoints: Vec<EndpointSetting>,
 }
 
 #[tauri::command]
@@ -146,48 +138,29 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
     let cfg = state.data.config();
     Settings {
         config_path: cfg.path().display().to_string(),
-        dune_api_key: cfg.dune_api_key(),
-        queries: DUNE_QUERIES
+        endpoints: bgeometrics::METRICS
             .iter()
-            .map(|(name, default)| QuerySetting {
-                name,
-                value: cfg.get("DUNE_QUERIES", name),
-                default,
+            .map(|m| EndpointSetting {
+                key: m.key,
+                label: m.label,
+                value: cfg.bgeometrics_endpoint(m.key),
+                candidates: m.candidates,
             })
             .collect(),
     }
 }
 
+/// Impose (ou, si vide, retire) le nom d'endpoint BGeometrics d'une métrique.
 #[tauri::command]
-fn save_dune_api_key(state: State<'_, AppState>, key: String) -> Result<(), String> {
-    state.data.config().save_dune_api_key(&key)?;
-    state.data.clear_cache();
-    Ok(())
-}
-
-#[tauri::command]
-fn delete_dune_api_key(state: State<'_, AppState>) -> Result<(), String> {
-    state.data.config().delete_dune_api_key()?;
-    state.data.clear_cache();
-    Ok(())
-}
-
-/// Enregistre (ou efface si vide) l'ID d'une requête Dune.
-#[tauri::command]
-fn save_query_id(state: State<'_, AppState>, name: String, value: String) -> Result<(), String> {
-    if !DUNE_QUERIES.iter().any(|(n, _)| *n == name) {
-        return Err(format!("Requête inconnue : {name}"));
+fn save_endpoint(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+    if bgeometrics::metric(&key).is_none() {
+        return Err(format!("Métrique inconnue : {key}"));
     }
     let value = value.trim();
-    if !value.is_empty() && !value.chars().all(|c| c.is_ascii_digit()) {
-        return Err("L'ID d'une requête Dune est un nombre (ex. 1234567).".into());
+    if !value.is_empty() && !bgeometrics::is_valid_endpoint(value) {
+        return Err("Un nom d'endpoint ne contient que des minuscules, des chiffres et des tirets (ex. sth-sopr).".into());
     }
-    let cfg = state.data.config();
-    if value.is_empty() {
-        cfg.delete("DUNE_QUERIES", &name)?
-    } else {
-        cfg.set("DUNE_QUERIES", &name, value)?
-    }
+    state.data.config().set_bgeometrics_endpoint(&key, value)?;
     state.data.clear_cache();
     Ok(())
 }
@@ -212,9 +185,7 @@ fn main() {
             run_simulation,
             export_simulation,
             get_settings,
-            save_dune_api_key,
-            delete_dune_api_key,
-            save_query_id,
+            save_endpoint,
             clear_cache
         ])
         .run(tauri::generate_context!())

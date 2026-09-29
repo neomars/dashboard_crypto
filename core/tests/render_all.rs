@@ -4,9 +4,9 @@
 
 use chrono::{Duration, NaiveDate};
 use dashboard_core::config::Config;
-use dashboard_core::dune::Row;
 use dashboard_core::indicators::{self, IDS};
 use dashboard_core::series::{Candle, PricePoint};
+use dashboard_core::table::Row;
 use dashboard_core::DataProvider;
 use serde_json::{json, Value};
 
@@ -62,14 +62,9 @@ fn days(from: &str, step: i64) -> impl Iterator<Item = NaiveDate> {
 
 fn provider() -> DataProvider {
     let dir = std::env::temp_dir().join(format!("dashboard-crypto-render-{}", std::process::id()));
-    let config = Config::new(dir.join("config.ini"));
-    config.save_dune_api_key("test").unwrap();
-    config
-        .set("DUNE_QUERIES", "net_realized_pnl", "999")
-        .unwrap();
-    let data = DataProvider::new(config);
+    let data =
+        DataProvider::new(Config::new(dir.join("config.ini"))).with_cache_dir(dir.join("cache"));
 
-    let btc = candles("2014-09-17", 0.05);
     data.seed_combined_btc(
         candles("2010-07-18", 0.05)
             .iter()
@@ -79,7 +74,7 @@ fn provider() -> DataProvider {
             })
             .collect(),
     );
-    data.seed_ticker_history("BTC-USD", btc);
+    data.seed_ticker_history("BTC-USD", candles("2014-09-17", 0.05));
     data.seed_ticker_history("ETH-USD", candles("2017-11-09", 0.004));
     data.seed_fear_greed(
         days("2018-02-01", 1)
@@ -88,38 +83,88 @@ fn provider() -> DataProvider {
             .collect(),
     );
 
-    let ts = |x: NaiveDate| format!("{x} 00:00:00.000 UTC");
-    data.seed_dune_results("6764134", rows(days("2020-01-01", 1).enumerate().map(|(i, x)| json!({
-        "day": ts(x), "sth_sopr": 1.0 + 0.05 * (i as f64 / 20.0).sin(), "lth_sopr": 1.5 + 0.8 * (i as f64 / 200.0).sin()
-    })).collect()));
-    data.seed_dune_results("3382000", rows(days("2024-01-11", 7).enumerate().flat_map(|(i, x)| {
-        [("IBIT", 30_000.0), ("FBTC", 12_000.0), ("GBTC", 8_000.0)].map(|(t, k)| json!({"time": ts(x), "etf_ticker": t, "tvl": k * (1.0 + i as f64 / 20.0)}))
-    }).collect()));
-    data.seed_dune_results("3089944", rows(days("2023-06-01", 1).enumerate().flat_map(|(i, x)| {
-        ["BTC/USD [BTC-USDC]", "ETH/USD [ETH-USDC]"].map(|m| json!({"date": ts(x), "market_symbol": m,
-            "long_oi_usd": 5e7 + 2e7 * (i as f64 / 15.0).sin(), "short_oi_usd": 4e7 + 1e7 * (i as f64 / 11.0).cos()}))
-    }).collect()));
-    data.seed_dune_results(
-        "7611528",
+    // Format BGeometrics : [{"d": "AAAA-MM-JJ", "unixTs": ..., "<métrique>": ...}]
+    let bg = |from: &str, step: i64, value: &dyn Fn(usize) -> Value| -> Vec<Row> {
         rows(
-            days("2016-01-01", 30)
-                .map(|x| {
-                    let mut r = json!({"month": ts(x)});
-                    for b in [
-                        "0d-1d", "1d-1w", "1w-1m", "1m-3m", "3m-6m", "6m-12m", "12m-18m", "18m-2y",
-                        "2y-3y", "3y-5y", "5y-7y", "7y-10y", "10y+",
-                    ] {
-                        r[b] = json!(100.0 / 13.0);
-                    }
+            days(from, step)
+                .enumerate()
+                .map(|(i, x)| {
+                    let mut r = value(i);
+                    r["d"] = json!(x.to_string());
+                    r["unixTs"] = json!(x.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
                     r
                 })
                 .collect(),
+        )
+    };
+    data.seed_bgeometrics(
+        "sth_sopr",
+        bg(
+            "2022-10-01",
+            1,
+            &|i| json!({"sthSopr": 1.0 + 0.05 * (i as f64 / 20.0).sin()}),
         ),
     );
-    data.seed_dune_results("999", rows(days("2023-01-02", 7).enumerate().map(|(i, x)| {
-        let s = (i as f64 / 8.0).sin();
-        json!({"week": ts(x), "realized_profit_usd": 1e9 * (1.0 + s.max(0.0) * 3.0), "realized_loss_usd": 1e9 * (1.0 + (-s).max(0.0) * 3.0)})
-    }).collect()));
+    data.seed_bgeometrics(
+        "lth_sopr",
+        bg(
+            "2022-10-01",
+            1,
+            &|i| json!({"lthSopr": 1.5 + 0.8 * (i as f64 / 200.0).sin()}),
+        ),
+    );
+    data.seed_bgeometrics("etf", bg("2024-01-11", 1, &|i| {
+        let k = 1.0 + i as f64 / 200.0;
+        json!({"ibit": 30_000.0 * k, "fbtc": 12_000.0 * k, "gbtc": 8_000.0 * k, "etfBtcTotal": 50_000.0 * k})
+    }));
+    data.seed_bgeometrics(
+        "realized_cap_hodl_waves",
+        bg("2022-10-01", 1, &|i| {
+            let mut r = json!({});
+            for (k, b) in [
+                "24h", "1d_1w", "1w_1m", "1m_3m", "3m_6m", "6m_12m", "1y_2y", "2y_3y", "3y_5y",
+                "5y_7y", "7y_10y", "10y",
+            ]
+            .iter()
+            .enumerate()
+            {
+                r[*b] = json!(1.0 + ((i + 40 * k) as f64 / 90.0).sin().abs());
+            }
+            r
+        }),
+    );
+    data.seed_bgeometrics(
+        "nrpl",
+        bg(
+            "2022-10-01",
+            1,
+            &|i| json!({"nrpl": 3e8 * (i as f64 / 50.0).sin() + 5e7}),
+        ),
+    );
+
+    // Format OKX : un point par jour, [ratio] ou [contrats, actif de base, USD]
+    for pair in ["BTC", "ETH"] {
+        let pts: Vec<NaiveDate> = days("2023-10-01", 1).collect();
+        data.seed_okx(
+            "long-short-account-ratio-contract",
+            pair,
+            pts.iter()
+                .enumerate()
+                .map(|(i, x)| (*x, vec![1.0 + 0.6 * (i as f64 / 15.0).sin()]))
+                .collect(),
+        );
+        data.seed_okx(
+            "open-interest-history",
+            pair,
+            pts.iter()
+                .enumerate()
+                .map(|(i, x)| {
+                    let usd = 3e9 + 1e9 * (i as f64 / 30.0).sin();
+                    (*x, vec![usd / 1e3, usd / 6e4, usd])
+                })
+                .collect(),
+        );
+    }
     data
 }
 
@@ -180,7 +225,7 @@ async fn every_indicator_renders_from_cached_data() {
 #[tokio::test]
 async fn long_short_modes_and_bmsb_regime() {
     let data = provider();
-    for mode in ["Long vs Short", "Ratio Long/Short", "Open Interest Cumulé"] {
+    for mode in ["Long vs Short", "Ratio Long/Short", "Open Interest"] {
         let out = indicators::render("long_short", &json!({"pair": "BTC", "mode": mode}), &data)
             .await
             .unwrap();
@@ -189,10 +234,10 @@ async fn long_short_modes_and_bmsb_regime() {
             .unwrap()
             .starts_with("BTC"));
     }
-    let err = indicators::render("long_short", &json!({"pair": "SOL"}), &data)
+    let err = indicators::render("long_short", &json!({"pair": "XRP"}), &data)
         .await
         .unwrap_err();
-    assert!(err.contains("SOL"), "{err}");
+    assert!(err.contains("XRP"), "{err}");
 
     let out = indicators::render("bmsb", &json!({"sma": 30, "ema": 40}), &data)
         .await

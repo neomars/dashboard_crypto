@@ -1,8 +1,9 @@
-//! Configuration utilisateur (`config.ini`) : clé API Dune et IDs de requêtes.
+//! Configuration utilisateur (`config.ini`) : noms d'endpoint BGeometrics
+//! imposés (sinon détectés automatiquement).
 //!
 //! Emplacement : variable `DASHBOARD_CRYPTO_CONFIG`, sinon
-//! `~/.config/dashboard-crypto/config.ini` (même fichier que la version Python
-//! installée par paquet, donc une clé déjà enregistrée est reprise).
+//! `~/.config/dashboard-crypto/config.ini` (même fichier que les versions
+//! précédentes ; leurs anciennes sections Dune sont ignorées).
 
 use ini::Ini;
 use std::path::{Path, PathBuf};
@@ -67,31 +68,24 @@ impl Config {
             .map_err(|e| format!("Impossible d'écrire {} : {e}", self.path.display()))
     }
 
-    pub fn dune_api_key(&self) -> String {
-        self.get("DUNE", "api_key")
-    }
-
-    pub fn save_dune_api_key(&self, key: &str) -> Result<(), String> {
-        self.set("DUNE", "api_key", key.trim())
-    }
-
-    pub fn delete_dune_api_key(&self) -> Result<(), String> {
-        self.delete("DUNE", "api_key")
-    }
-
-    /// ID d'une requête Dune : variable `DUNE_QUERY_<NOM>` > section
-    /// `[DUNE_QUERIES]` > valeur par défaut (vide = aucune).
-    pub fn dune_query_id(&self, name: &str, default: &str) -> String {
-        if let Ok(v) = std::env::var(format!("DUNE_QUERY_{}", name.to_uppercase())) {
+    /// Nom d'endpoint BGeometrics imposé pour une métrique : variable
+    /// `BGEOMETRICS_<CLÉ>` > section `[BGEOMETRICS]` > vide (détection automatique).
+    pub fn bgeometrics_endpoint(&self, key: &str) -> String {
+        if let Ok(v) = std::env::var(format!("BGEOMETRICS_{}", key.to_uppercase())) {
             if !v.trim().is_empty() {
                 return v.trim().to_string();
             }
         }
-        let v = self.get("DUNE_QUERIES", name);
-        if v.is_empty() {
-            default.to_string()
+        self.get("BGEOMETRICS", key)
+    }
+
+    /// Impose (ou, si vide, retire) le nom d'endpoint d'une métrique BGeometrics.
+    pub fn set_bgeometrics_endpoint(&self, key: &str, endpoint: &str) -> Result<(), String> {
+        let endpoint = endpoint.trim();
+        if endpoint.is_empty() {
+            self.delete("BGEOMETRICS", key)
         } else {
-            v
+            self.set("BGEOMETRICS", key, endpoint)
         }
     }
 }
@@ -110,30 +104,28 @@ mod tests {
     }
 
     #[test]
-    fn save_read_and_delete_key() {
-        let cfg = temp_config("key");
-        assert_eq!(cfg.dune_api_key(), "");
-        cfg.save_dune_api_key("  abc123 ").unwrap();
-        assert_eq!(cfg.dune_api_key(), "abc123");
-        cfg.delete_dune_api_key().unwrap();
-        assert_eq!(cfg.dune_api_key(), "");
+    fn endpoint_override_roundtrip() {
+        let cfg = temp_config("endpoint");
+        assert_eq!(cfg.bgeometrics_endpoint("etf"), "");
+        cfg.set_bgeometrics_endpoint("etf", " etf-btc ").unwrap();
+        assert_eq!(cfg.bgeometrics_endpoint("etf"), "etf-btc");
+        cfg.set_bgeometrics_endpoint("etf", "").unwrap();
+        assert_eq!(cfg.bgeometrics_endpoint("etf"), "");
         assert!(!std::fs::read_to_string(cfg.path())
             .unwrap()
-            .contains("DUNE"));
+            .contains("BGEOMETRICS"));
     }
 
     #[test]
-    fn reads_python_style_quoted_values() {
+    fn reads_quoted_values_and_ignores_old_sections() {
         let cfg = temp_config("quoted");
         std::fs::create_dir_all(cfg.path().parent().unwrap()).unwrap();
         std::fs::write(
             cfg.path(),
-            "[DUNE]\napi_key = \"xyz\"\n\n[DUNE_QUERIES]\nsopr = 42\n",
+            "[DUNE]\napi_key = xyz\n\n[BGEOMETRICS]\nnrpl = \"nrpl-usd\"\n",
         )
         .unwrap();
-        assert_eq!(cfg.dune_api_key(), "xyz");
-        assert_eq!(cfg.dune_query_id("sopr", "1"), "42");
-        assert_eq!(cfg.dune_query_id("institutional", "3382000"), "3382000");
-        assert_eq!(cfg.dune_query_id("net_realized_pnl", ""), "");
+        assert_eq!(cfg.bgeometrics_endpoint("nrpl"), "nrpl-usd");
+        assert_eq!(cfg.bgeometrics_endpoint("sth_sopr"), "");
     }
 }
