@@ -14,6 +14,7 @@ mod fear_greed;
 mod halving;
 mod institutional;
 mod long_short;
+pub mod mstr_mnav;
 mod net_realized_pnl;
 mod onchain;
 mod realized_cap_utxo;
@@ -26,7 +27,7 @@ pub use bmsb::{calculate_bmsb, Regime};
 pub use net_realized_pnl::{bubble_sizes, weekly_net_realized, WeeklyPnl};
 pub use vcr::annualized_vol;
 
-pub const IDS: [&str; 14] = [
+pub const IDS: [&str; 15] = [
     "fear_greed",
     "halving",
     "onchain",
@@ -41,6 +42,7 @@ pub const IDS: [&str; 14] = [
     "cycle_roi",
     "realized_cap_utxo",
     "net_realized_pnl",
+    "mstr_mnav",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -98,6 +100,10 @@ pub(crate) fn param_u64(params: &Value, key: &str, default: u64, min: u64, max: 
         .clamp(min, max)
 }
 
+pub(crate) fn param_bool(params: &Value, key: &str, default: bool) -> bool {
+    params.get(key).and_then(Value::as_bool).unwrap_or(default)
+}
+
 pub(crate) fn param_str<'a>(params: &'a Value, key: &str, default: &'a str) -> &'a str {
     params.get(key).and_then(Value::as_str).unwrap_or(default)
 }
@@ -122,6 +128,7 @@ pub async fn render(
         "cycle_roi" => cycle_roi::render(data).await,
         "realized_cap_utxo" => realized_cap_utxo::render(data).await,
         "net_realized_pnl" => net_realized_pnl::render(data).await,
+        "mstr_mnav" => mstr_mnav::render(data, params).await,
         other => Err(format!("Indicateur inconnu : {other}")),
     }
 }

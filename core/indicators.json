@@ -114,5 +114,13 @@
         "description": "Profit ou perte nets réalisés chaque semaine sur la blockchain, en bulles sur le prix du Bitcoin, via BGeometrics.",
         "default_scale": "linear",
         "interpretation": "Bulle verte = profit net réalisé sur la semaine, rouge = perte nette ; la taille est proportionnelle au montant. Une hausse de prix avec de petites bulles vertes signale une prise de profit encore faible (peu de pression vendeuse)."
+    },
+    {
+        "id": "mstr_mnav",
+        "name": "MSTR mNAV",
+        "icon": "🏢",
+        "description": "Cours de Strategy (MSTR) coloré selon son mNAV : capitalisation boursière rapportée à la valeur des bitcoins détenus.",
+        "default_scale": "logarithmique",
+        "interpretation": "Vert : l'action vaut moins que ses bitcoins (mNAV < 1, sous-cotée). Jaune : prime modérée. Orange puis rouge : forte prime payée au-dessus des bitcoins détenus. Seuils modifiables dans config.ini, section [MSTR]."
     }
 ]
