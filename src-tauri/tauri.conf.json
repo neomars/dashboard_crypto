@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Dashboard Crypto",
+  "mainBinaryName": "dashboard-crypto",
+  "version": "2.0.0",
+  "identifier": "io.github.neomars.dashboardcrypto",
+  "build": {
+    "frontendDist": "../ui",
+    "beforeDevCommand": "npm run vendor",
+    "beforeBuildCommand": "npm run vendor"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Dashboard Crypto",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb"],
+    "category": "Finance",
+    "publisher": "neomars",
+    "homepage": "https://github.com/neomars/dashboard_crypto",
+    "shortDescription": "Tableau de bord d'indicateurs Bitcoin",
+    "longDescription": "Indicateurs du marché Bitcoin (Fear & Greed, halvings, indicateurs on-chain, SOPR, Net Realized Profit/Loss...) et simulateur de stratégie de levier.",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
+    "linux": {
+      "deb": {
+        "section": "misc"
+      }
+    }
+  }
+}

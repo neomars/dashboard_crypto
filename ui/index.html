@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard Crypto</title>
+  <link rel="icon" href="icon.svg">
+  <link rel="stylesheet" href="styles.css">
+  <script src="vendor/plotly.min.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><img src="icon.svg" alt=""><span>Dashboard Crypto</span></div>
+    <nav id="nav" aria-label="Navigation"></nav>
+    <div id="scale" class="scale" hidden>
+      <h3>Type d'échelle (Axe Y)</h3>
+      <label><input type="radio" name="scale" value="linear"> Linéaire</label>
+      <label><input type="radio" name="scale" value="log"> Logarithmique</label>
+    </div>
+    <footer id="version"></footer>
+  </aside>
+  <main id="main"></main>
+</body>
+</html>
