@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Dashboard Crypto
+GenericName=Indicateurs Bitcoin
+Comment=Indicateurs du marché Bitcoin et des marchés financiers
+Exec=dashboard-crypto
+Icon=dashboard-crypto
+Terminal=false
+Categories=Office;Finance;
+Keywords=bitcoin;crypto;btc;finance;indicateurs;

@@ -1,0 +1,81 @@
+name: Build
+
+# Produit le paquet Debian de l'application (dashboard-crypto_<version>_all.deb),
+# l'installe sur le runner pour vérifier qu'il démarre, puis le publie.
+#
+# Lancement : pousser un tag `v*` pour une vraie release, ou manuellement via
+# « Run workflow » (onglet Actions) pour tester un build sans tag.
+#
+# La version vient du tag : pousser v1.2.0 construit la version 1.2.0. Un
+# lancement manuel peut recevoir une version ; sinon celle du fichier VERSION.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version à construire (ex. 1.2.0). Vide = contenu du fichier VERSION."
+        required: false
+        default: ""
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Tests unitaires
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+      # Passée par l'environnement et non inlinée dans le script, pour qu'une
+      # saisie manuelle ne puisse pas injecter de commande shell.
+      - name: Construire le paquet
+        env:
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.version }}
+        run: packaging/debian/build_deb.sh $VERSION
+
+      - name: Tester l'installation du paquet
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ./dist/*.deb
+          dashboard-crypto --check
+
+      - name: Publier l'artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-crypto-deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  # Uniquement sur un vrai tag `v*` : publie le .deb dans une Release GitHub
+  # (liens permanents, contrairement aux artefacts qui expirent après 90 jours).
+  release:
+    needs: build-deb
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashboard-crypto-deb
+          path: dist
+
+      - name: Publier la Release GitHub
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          files: dist/*.deb
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -134,5 +134,15 @@
         "description": "Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge) via Dune Analytics.",
         "default_scale": "linear",
         "interpretation": "Une part croissante des bandes longues (2y+) reflète l'accumulation par les détenteurs de long terme (HODLers)."
+    },
+    {
+        "id": "net_realized_pnl",
+        "name": "Net Realized Profit / Loss",
+        "icon": "💰",
+        "module": "net_realized_pnl",
+        "function": "get_net_realized_pnl_plot",
+        "description": "Profit et perte réalisés chaque semaine sur la blockchain, en bulles sur le prix du Bitcoin, via Dune Analytics.",
+        "default_scale": "linear",
+        "interpretation": "Bulle verte = profit net réalisé sur la semaine, rouge = perte nette ; la taille est proportionnelle au montant. Une hausse de prix avec de petites bulles vertes signale une prise de profit encore faible (peu de pression vendeuse)."
     }
 ]

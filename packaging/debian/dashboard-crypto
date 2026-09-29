@@ -1,0 +1,7 @@
+#!/bin/sh
+VENV=/opt/dashboard-crypto/venv
+if [ ! -x "$VENV/bin/python" ]; then
+    echo "Environnement Python de Dashboard Crypto absent : relancez 'sudo dpkg --configure -a'." >&2
+    exit 1
+fi
+exec "$VENV/bin/python" /opt/dashboard-crypto/launcher.py "$@"
