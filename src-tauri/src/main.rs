@@ -4,7 +4,7 @@
 use dashboard_core::catalog::{self, IndicatorMeta};
 use dashboard_core::config::Config;
 use dashboard_core::figure::Figure;
-use dashboard_core::indicators::{self, IndicatorOutput};
+use dashboard_core::indicators::{self, mstr_mnav, IndicatorOutput};
 use dashboard_core::simulator::{self, SimParams, Simulation, Summary, Trade};
 use dashboard_core::{bgeometrics, pdf, DataProvider};
 use serde::Serialize;
@@ -128,9 +128,18 @@ struct EndpointSetting {
 }
 
 #[derive(Serialize)]
+struct MstrHoldingsSetting {
+    date: String,
+    btc: f64,
+    shares: f64,
+}
+
+#[derive(Serialize)]
 struct Settings {
     config_path: String,
     endpoints: Vec<EndpointSetting>,
+    /// Dernière donnée de holdings MSTR retenue (fichier intégré + config.ini).
+    mstr: Option<MstrHoldingsSetting>,
 }
 
 #[tauri::command]
@@ -147,6 +156,11 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
                 candidates: m.candidates,
             })
             .collect(),
+        mstr: mstr_mnav::latest_holdings(cfg).map(|h| MstrHoldingsSetting {
+            date: h.date.format("%d/%m/%Y").to_string(),
+            btc: h.btc,
+            shares: h.shares,
+        }),
     }
 }
 

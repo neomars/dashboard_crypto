@@ -23,6 +23,7 @@ L'application propose une barre de navigation latérale pour choisir parmi les o
 13. **Bitcoin Market Cycle ROI** : Comparaison de la performance du Bitcoin (ROI) depuis les différents sommets (tops) de cycle historiques.
 14. **Realized Cap HODL Waves** : Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge, de moins d'un jour à plus de 10 ans), via BGeometrics.
 15. **Net Realized Profit / Loss** : Profit ou perte nets réalisés chaque semaine sur la blockchain, affichés en bulles sur le prix du Bitcoin (vert = profit net, rouge = perte nette, taille proportionnelle au montant), à la manière du graphique Glassnode « Profit Taking ». Permet de voir si une hausse s'accompagne d'une forte prise de profit ou non. Données : NRPL journalier de BGeometrics, cumulé par semaine.
+16. **MSTR mNAV** : Cours de Strategy (MSTR), coloré du vert au rouge selon son mNAV (capitalisation boursière rapportée à la valeur des bitcoins détenus), avec la courbe du mNAV et ses zones en dessous. Montre d'un coup d'œil si l'action est sous-cotée ou sur-cotée par rapport à ses bitcoins (voir [Calcul du MSTR mNAV](#calcul-du-mstr-mnav)).
 
 ### Calcul du Bitcoin Cycle Correction Analysis
 
@@ -69,6 +70,41 @@ Plus la moyenne des corrections et la correction la plus forte diminuent d’un 
 *   **Cycle 2022-2025** (en cours) : Moyenne (19.0%), Max (15.0%)
 Cela montre une nette réduction de l’amplitude des corrections au fil des cycles.
 
+### Calcul du MSTR mNAV
+
+$$
+\text{mNAV} = \frac{\text{capitalisation boursière}}{\text{valeur des BTC détenus}} = \frac{\text{cours MSTR} \times \text{actions en circulation}}{\text{BTC détenus} \times \text{prix du BTC}}
+$$
+
+- **Prix** : clôtures journalières de MSTR et de BTC-USD (Yahoo Finance). MSTR ne cotant que les jours ouvrés, le calcul garde ses jours de cotation, avec la clôture du BTC du même jour.
+- **BTC détenus et actions en circulation** : aucune API gratuite sans clé ne fournit leur historique. Ils viennent du fichier intégré [`core/data/mstr_holdings.json`](core/data/mstr_holdings.json), établi d'après les publications de Strategy à la SEC (10-Q, 10-K, 8-K) et ses annonces d'achat. Chaque point indique sa source. Les actions comptent les classes A et B, exprimées après la division par 10 d'août 2024, comme les cours Yahoo ajustés.
+- **Entre deux publications**, la dernière valeur connue est reprise (pas d'interpolation), champ par champ : un point peut ne donner que les BTC détenus.
+
+**Zones** (seuils par défaut, modifiables) :
+
+| mNAV | Zone | Couleur |
+|---|---|---|
+| < 1,0 | sous-coté : l'action vaut moins que ses bitcoins | vert franc |
+| 1,0 – 1,5 | neutre | vert à jaune |
+| 1,5 – 2,5 | sur-coté | orange |
+| > 2,5 | fortement sur-coté | rouge |
+
+Le graphique du haut affiche le cours de MSTR (échelle logarithmique), chaque jour coloré selon le mNAV, avec une échelle graduée en mNAV. Le prix du BTC peut être ajouté en trait fin sur l'axe de droite. Le graphique du bas trace le mNAV, avec la parité (1,0) et les zones en fond. Le titre indique le mNAV actuel et la date de la dernière donnée de holdings ; un avertissement s'affiche si elle a plus de 45 jours.
+
+**Ajouter les achats récents** sans recompiler : section `[MSTR]` de `~/.config/dashboard-crypto/config.ini`. Une ligne par date, `BTC détenus` ou `BTC détenus, actions en circulation` (séparateurs de milliers acceptés : espace ou `_`). À date égale, ces valeurs remplacent celles du fichier.
+
+```ini
+[MSTR]
+2026-10-05 = 850000
+2026-10-12 = 851 200, 390_000_000
+seuils = 1.0, 1.5, 2.5
+```
+
+**Limites** :
+- Ce mNAV « simple » utilise la **capitalisation boursière** (actions de base en circulation). Strategy publie aussi un mNAV fondé sur l'**enterprise value** : dette et actions préférentielles incluses, sur la base des actions diluées. Il est plus élevé que celui-ci.
+- La précision dépend du fichier de holdings. Les BTC détenus sont connus à chaque annonce, mais le nombre d'actions n'est publié qu'environ une fois par trimestre, alors que Strategy émet des actions en continu. Le mNAV est donc sous-estimé entre deux publications. En particulier, aucun chiffre n'a été trouvé entre le 25/07/2024 et le 31/12/2024 : les émissions massives de fin 2024 ne sont prises en compte qu'au 31/12/2024.
+- Quelques valeurs d'actions (fin 2025, T1 et T2 2026) viennent de sources secondaires arrondies (GuruFocus, AlphaQuery), et les deux points de 2026 tirés du 10-K 2025 et du 10-Q T2 2026 supposent la classe B inchangée. La colonne `source` du fichier le précise.
+
 ## Installation sur Debian / Ubuntu
 
 Un paquet `.deb` est publié dans les [Releases](https://github.com/neomars/dashboard_crypto/releases) du dépôt : `dashboard-crypto_<version>_amd64.deb` (Debian 12+, Ubuntu 22.04+, Mint 21+…, 64 bits).
@@ -96,6 +132,7 @@ Toutes les données viennent d'API publiques et gratuites, **sans clé ni compte
 | [alternative.me](https://alternative.me/crypto/fear-and-greed-index/) | indice Fear & Greed |
 | [mempool.space](https://mempool.space) | hauteur de bloc (estimation du prochain halving) |
 | [Bitcoin-Dataset](https://github.com/Yrzxiong/Bitcoin-Dataset) (GitHub) | historique du prix BTC 2010-2018 |
+| Strategy / SEC (fichier intégré) | BTC détenus et actions en circulation de Strategy (MSTR), complétables dans `config.ini` |
 
 ### Limites de BGeometrics
 
@@ -146,8 +183,9 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
   - `indicators/` : un module par indicateur, chacun produisant une figure Plotly (JSON).
   - `simulator.rs` : simulateur de levier dynamique (règle « no-loss », liquidation, export CSV).
   - `pdf.rs` : rapport PDF de simulation.
-  - `config.rs` : lecture/écriture de `config.ini` (noms d'endpoint BGeometrics imposés).
+  - `config.rs` : lecture/écriture de `config.ini` (noms d'endpoint BGeometrics imposés, section `[MSTR]`).
   - `indicators.json` : liste des outils affichés dans la barre latérale.
+  - `data/mstr_holdings.json` : BTC détenus et actions en circulation de Strategy (MSTR), avec leurs sources.
 - `src-tauri/` : application de bureau (commandes appelées par l'interface, configuration du paquet).
 - `ui/` : interface (HTML/CSS/JavaScript, sans étape de compilation).
 - `scripts/` : copie de Plotly.js dans `ui/vendor/`, changement de version.

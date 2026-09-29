@@ -2,9 +2,9 @@
 //! réseau). Avec `RENDER_SAMPLES_HTML=chemin.html`, écrit aussi une page HTML
 //! affichant toutes les figures avec Plotly.js, pour contrôle visuel.
 
-use chrono::{Duration, NaiveDate};
+use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use dashboard_core::config::Config;
-use dashboard_core::indicators::{self, IDS};
+use dashboard_core::indicators::{self, mstr_mnav, IDS};
 use dashboard_core::series::{Candle, PricePoint};
 use dashboard_core::table::Row;
 use dashboard_core::DataProvider;
@@ -45,6 +45,33 @@ fn candles(start: &str, scale: f64) -> Vec<Candle> {
         .collect()
 }
 
+/// mNAV cible de la série MSTR synthétique (entre ~0,7 et ~2,5).
+fn target_mnav(date: NaiveDate) -> f64 {
+    let t = (date - d("2020-08-01")).num_days() as f64;
+    1.6 + 0.9 * (t / 240.0).sin()
+}
+
+/// Cours MSTR synthétique (jours ouvrés seulement) donnant exactement
+/// `target_mnav` avec les holdings du fichier embarqué et le BTC synthétique.
+fn mstr_candles(btc: &[Candle]) -> Vec<Candle> {
+    let holdings = mstr_mnav::forward_fill(&mstr_mnav::embedded_points());
+    btc.iter()
+        .filter(|c| !matches!(c.date.weekday(), Weekday::Sat | Weekday::Sun))
+        .filter_map(|c| {
+            let h = mstr_mnav::holdings_at(&holdings, c.date)?;
+            let close = target_mnav(c.date) * h.btc * c.close / h.shares;
+            Some(Candle {
+                date: c.date,
+                open: close,
+                high: close,
+                low: close,
+                close,
+                volume: 1e6,
+            })
+        })
+        .collect()
+}
+
 fn rows(values: Vec<Value>) -> Vec<Row> {
     values
         .into_iter()
@@ -76,6 +103,7 @@ fn provider() -> DataProvider {
     );
     data.seed_ticker_history("BTC-USD", candles("2014-09-17", 0.05));
     data.seed_ticker_history("ETH-USD", candles("2017-11-09", 0.004));
+    data.seed_ticker_history("MSTR", mstr_candles(&candles("2014-09-17", 0.05)));
     data.seed_fear_greed(
         days("2018-02-01", 1)
             .enumerate()
@@ -220,6 +248,46 @@ async fn every_indicator_renders_from_cached_data() {
         }
         std::fs::write(path, html).unwrap();
     }
+}
+
+#[tokio::test]
+async fn mstr_mnav_matches_known_ratio_on_trading_days() {
+    let data = provider();
+    let out = indicators::render("mstr_mnav", &json!({"btc": true}), &data)
+        .await
+        .unwrap();
+    let fig = serde_json::to_value(&out.figure).unwrap();
+    let mnav_trace = fig["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "mNAV")
+        .unwrap();
+    let xs = mnav_trace["x"].as_array().unwrap();
+    let ys = mnav_trace["y"].as_array().unwrap();
+    assert!(xs.len() > 1000);
+    for (x, y) in xs.iter().zip(ys) {
+        let date = d(x.as_str().unwrap());
+        assert!(
+            !matches!(date.weekday(), Weekday::Sat | Weekday::Sun),
+            "{date} : jours de cotation MSTR seulement"
+        );
+        assert!(
+            (y.as_f64().unwrap() - target_mnav(date)).abs() < 1e-9,
+            "{date}"
+        );
+    }
+    assert_eq!(out.metrics[0].label, "mNAV actuel");
+    assert!(fig["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|t| t["yaxis"] == "y3"));
+
+    let without_btc = indicators::render("mstr_mnav", &json!({"btc": false}), &data)
+        .await
+        .unwrap();
+    assert!(!without_btc.figure.data.iter().any(|t| t["yaxis"] == "y3"));
 }
 
 #[tokio::test]

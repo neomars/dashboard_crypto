@@ -29,6 +29,7 @@ const SOURCES = [
   ["alternative.me", "https://alternative.me/crypto/fear-and-greed-index/", "indice Fear & Greed"],
   ["mempool.space", "https://mempool.space", "hauteur de bloc (estimation du prochain halving)"],
   ["Bitcoin-Dataset (GitHub)", "https://github.com/Yrzxiong/Bitcoin-Dataset", "historique du prix BTC 2010-2018"],
+  ["Strategy / SEC", "https://www.strategy.com/purchases", "BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré à l'application, complétable dans config.ini"],
 ];
 
 const state = {
@@ -38,6 +39,7 @@ const state = {
   params: {        // paramètres saisis par indicateur
     bmsb: { sma: 20, ema: 21 },
     long_short: { pair: "BTC", mode: "Long vs Short" },
+    mstr_mnav: { btc: true },
   },
   sim: null,
   requestId: 0,
@@ -193,6 +195,13 @@ async function renderSettings(box) {
       link("documentation de l'API", "https://bitcoin-data.com/api/redoc.html"), "."),
     el("table", { class: "queries" }, el("thead", {}, el("tr", {}, el("th", {}, "Métrique"), el("th", {}, "Endpoint"), el("th"))), el("tbody", {}, rows)),
     status,
+    el("h3", {}, "MSTR mNAV : bitcoins détenus"),
+    settings.mstr
+      ? el("p", {}, `Dernière donnée utilisée : ${settings.mstr.date}, ${fmtNumber(settings.mstr.btc, 0)} BTC détenus, ${fmtNumber(settings.mstr.shares, 0)} actions.`)
+      : el("p", {}, "Aucune donnée de holdings MSTR."),
+    el("p", { class: "muted" }, "Pour ajouter les achats annoncés depuis (", link("strategy.com/purchases", "https://www.strategy.com/purchases"),
+      "), ajoutez des lignes « AAAA-MM-JJ = BTC détenus » ou « AAAA-MM-JJ = BTC détenus, actions en circulation » dans la section ",
+      el("code", {}, "[MSTR]"), " du fichier de configuration ci-dessous. Les seuils de couleur se règlent avec ", el("code", {}, "seuils = 1.0, 1.5, 2.5"), "."),
     el("p", { class: "muted" }, "Fichier de configuration : ", el("code", {}, settings.config_path)),
   );
 }
@@ -219,6 +228,11 @@ function indicatorControls(ind, refresh) {
         onchange: () => { params.mode = m; refresh(); } }), " ", m)));
     return el("div", { class: "controls" }, el("label", { class: "field" }, el("span", {}, "Paire"), pair),
       el("div", { class: "field" }, el("span", {}, "Mode d'affichage"), modes));
+  }
+  if (ind.id === "mstr_mnav") {
+    const toggle = el("input", { type: "checkbox", checked: params.btc,
+      onchange: (e) => { params.btc = e.target.checked; refresh(); } });
+    return el("div", { class: "controls" }, el("label", {}, toggle, " Afficher le prix du BTC (axe de droite)"));
   }
   return null;
 }

@@ -41,6 +41,18 @@ impl Config {
             .unwrap_or_default()
     }
 
+    /// Toutes les entrées (clé, valeur) d'une section, dans l'ordre du fichier.
+    pub fn section(&self, section: &str) -> Vec<(String, String)> {
+        let ini = self.load();
+        ini.section(Some(section))
+            .map(|s| {
+                s.iter()
+                    .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn set(&self, section: &str, key: &str, value: &str) -> Result<(), String> {
         let mut ini = self.load();
         ini.with_section(Some(section)).set(key, value);
@@ -101,6 +113,25 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         Config::new(dir.join("sub").join("config.ini"))
+    }
+
+    #[test]
+    fn section_lists_entries_in_file_order() {
+        let cfg = temp_config("section");
+        assert!(cfg.section("MSTR").is_empty());
+        std::fs::create_dir_all(cfg.path().parent().unwrap()).unwrap();
+        std::fs::write(
+            cfg.path(),
+            "[MSTR]\nseuils = 1.0, 1.5, 2.5\n2026-10-05 = 850000, 390000000\n",
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.section("MSTR"),
+            vec![
+                ("seuils".to_string(), "1.0, 1.5, 2.5".to_string()),
+                ("2026-10-05".to_string(), "850000, 390000000".to_string())
+            ]
+        );
     }
 
     #[test]
