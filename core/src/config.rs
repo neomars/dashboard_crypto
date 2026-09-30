@@ -2,7 +2,8 @@
 //! imposés (sinon détectés automatiquement).
 //!
 //! Emplacement : variable `DASHBOARD_CRYPTO_CONFIG`, sinon
-//! `~/.config/dashboard-crypto/config.ini` (même fichier que les versions
+//! `~/.config/dashboard-crypto/config.ini` sous Linux,
+//! `%APPDATA%\dashboard-crypto\config.ini` sous Windows (même fichier que les versions
 //! précédentes ; leurs anciennes sections Dune sont ignorées).
 
 use ini::Ini;
