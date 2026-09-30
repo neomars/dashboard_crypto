@@ -10,6 +10,7 @@ pub mod figure;
 pub mod indicators;
 pub mod okx;
 pub mod pdf;
+pub mod sec;
 pub mod series;
 pub mod simulator;
 pub mod table;

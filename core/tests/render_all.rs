@@ -104,6 +104,15 @@ fn provider() -> DataProvider {
     data.seed_ticker_history("BTC-USD", candles("2014-09-17", 0.05));
     data.seed_ticker_history("ETH-USD", candles("2017-11-09", 0.004));
     data.seed_ticker_history("MSTR", mstr_candles(&candles("2014-09-17", 0.05)));
+    // SEC hors ligne : aucun nouveau 8-K, nombre d'actions identique au fichier intégré.
+    data.seed_sec(
+        &dashboard_core::sec::submissions_url(),
+        r#"{"filings": {"recent": {"accessionNumber": [], "form": [], "filingDate": [], "reportDate": [], "primaryDocument": []}}}"#,
+    );
+    data.seed_sec(
+        &dashboard_core::sec::shares_concept_url(),
+        r#"{"units": {"shares": [{"end": "2026-07-24", "val": 384225751, "accn": "b", "form": "10-Q", "filed": "2026-07-30"}]}}"#,
+    );
     data.seed_fear_greed(
         days("2018-02-01", 1)
             .enumerate()
@@ -278,6 +287,9 @@ async fn mstr_mnav_matches_known_ratio_on_trading_days() {
         );
     }
     assert_eq!(out.metrics[0].label, "mNAV actuel");
+    let notices = serde_json::to_value(&out.notices).unwrap();
+    assert_eq!(notices[0]["level"], "success", "{notices}");
+    assert_eq!(notices[1]["level"], "success", "{notices}");
     assert!(fig["data"]
         .as_array()
         .unwrap()
