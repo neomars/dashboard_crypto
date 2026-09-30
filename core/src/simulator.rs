@@ -73,6 +73,18 @@ impl SimParams {
         Ok(())
     }
 
+    /// Nom de la valeur simulée, tiré du ticker : `ETH-USD` → `ETH`, `AAPL` → `AAPL`.
+    /// Remplace « BTC » dans les textes (graphique, journal, CSV, PDF).
+    pub fn unit(&self) -> String {
+        let ticker = self.ticker.trim();
+        ticker
+            .split('-')
+            .next()
+            .filter(|u| !u.is_empty())
+            .unwrap_or(ticker)
+            .to_uppercase()
+    }
+
     /// Paramètres tels qu'affichés dans le rapport PDF.
     pub fn display_rows(&self) -> Vec<(String, String)> {
         vec![
@@ -103,10 +115,10 @@ pub enum Mode {
 #[derive(Debug, Clone, Serialize)]
 pub struct HistoryRow {
     pub date: NaiveDate,
-    pub btc_price: f64,
+    pub price: f64,
     pub portfolio_value: f64,
     pub mode: Mode,
-    pub btc_units: f64,
+    pub units: f64,
     pub drawdown: f64,
     pub buy_hold: f64,
 }
@@ -156,12 +168,7 @@ pub fn money(v: f64) -> String {
 pub fn simulate(prices: &[PricePoint], params: &SimParams) -> Result<Simulation, String> {
     params.validate()?;
     let first = prices.first().ok_or("Pas de données disponibles.")?;
-    let unit = params
-        .ticker
-        .split('-')
-        .next()
-        .unwrap_or(&params.ticker)
-        .to_string();
+    let unit = params.unit();
     let drop_threshold = -params.drop_pct / 100.0;
     let lev = params.target_leverage;
 
@@ -304,10 +311,10 @@ pub fn simulate(prices: &[PricePoint], params: &SimParams) -> Result<Simulation,
         portfolio_ath = portfolio_ath.max(portfolio_value);
         history.push(HistoryRow {
             date,
-            btc_price: price,
+            price,
             portfolio_value,
             mode,
-            btc_units: units,
+            units,
             drawdown: (portfolio_value - portfolio_ath) / portfolio_ath * 100.0,
             buy_hold: params.initial_capital * price / start_price,
         });
@@ -327,8 +334,8 @@ impl Simulation {
         Summary {
             final_equity: last.portfolio_value,
             performance_pct: (last.portfolio_value / cap - 1.0) * 100.0,
-            final_units: last.btc_units,
-            initial_units: cap / first.btc_price,
+            final_units: last.units,
+            initial_units: cap / first.price,
             buy_hold: last.buy_hold,
             buy_hold_pct: (last.buy_hold / cap - 1.0) * 100.0,
             max_drawdown: self.history.iter().map(|h| h.drawdown).fold(0.0, f64::min),
@@ -337,17 +344,25 @@ impl Simulation {
     }
 
     pub fn to_csv(&self) -> String {
+        // Colonnes nommées d'après la valeur (BTC_Price, ETH_Price...), sans caractère
+        // qui casserait le CSV.
+        let unit: String = self
+            .params
+            .unit()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
         let mut out =
-            String::from("Date,BTC_Price,Portfolio_Value,Mode,BTC_Units,Drawdown,Buy_Hold\n");
+            format!("Date,{unit}_Price,Portfolio_Value,Mode,{unit}_Units,Drawdown,Buy_Hold\n");
         for h in &self.history {
             let _ = writeln!(
                 out,
                 "{},{},{},{:?},{},{},{}",
                 fmt_date(h.date),
-                h.btc_price,
+                h.price,
                 h.portfolio_value,
                 h.mode,
-                h.btc_units,
+                h.units,
                 h.drawdown,
                 h.buy_hold
             );
@@ -360,32 +375,36 @@ impl Simulation {
         let x = dates(h.iter().map(|r| r.date));
         let col = |f: fn(&HistoryRow) -> f64| h.iter().map(f).collect::<Vec<f64>>();
         let (first, last) = (h[0].date, h[h.len() - 1].date);
+        let unit = self.params.unit();
 
         let mut layout = two_rows([0.8, 0.2], 0.05, None);
         merge(
             &mut layout,
             json!({
-                "title": {"text": "Simulation d'Investissement BTC - Stratégie de Levier Dynamique"},
+                "title": {"text": format!("Simulation d'Investissement {unit} - Stratégie de Levier Dynamique")},
                 "xaxis": {"range": [fmt_date(first), fmt_date(last)]},
                 "xaxis2": {"title": {"text": "Date"}},
                 "yaxis": {"title": {"text": "Capital (USD)"}},
                 "yaxis2": {"title": {"text": "Drawdown (%)"}, "side": "left", "showgrid": true, "gridcolor": "rgba(255,255,255,0.05)"},
-                "yaxis3": {"title": {"text": "Prix BTC (USD)"}, "overlaying": "y", "side": "right", "showgrid": false, "anchor": "x"},
+                "yaxis3": {"title": {"text": format!("Prix {unit} (USD)")}, "overlaying": "y", "side": "right", "showgrid": false, "anchor": "x"},
                 "height": 800, "hovermode": "x unified",
                 "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1}
             }),
         );
         let mut fig = Figure::new(layout);
         fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Valeur Portefeuille (Stratégie)", "x": x, "y": col(|r| r.portfolio_value), "line": {"color": "#00FFAA", "width": 2.5}}));
-        fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Buy & Hold BTC", "x": x, "y": col(|r| r.buy_hold), "line": {"color": "rgba(255, 165, 0, 0.6)", "width": 1.5, "dash": "dash"}}));
-        fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Prix BTC", "x": x, "y": col(|r| r.btc_price), "yaxis": "y3", "line": {"color": "rgba(255, 255, 255, 0.1)", "width": 1}}));
+        fig.trace(json!({"type": "scatter", "mode": "lines", "name": format!("Buy & Hold {unit}"), "x": x, "y": col(|r| r.buy_hold), "line": {"color": "rgba(255, 165, 0, 0.6)", "width": 1.5, "dash": "dash"}}));
+        fig.trace(json!({"type": "scatter", "mode": "lines", "name": format!("Prix {unit}"), "x": x, "y": col(|r| r.price), "yaxis": "y3", "line": {"color": "rgba(255, 255, 255, 0.1)", "width": 1}}));
         fig.trace(json!({"type": "scatter", "mode": "lines", "name": "Drawdown (%)", "x": x, "y": col(|r| r.drawdown), "xaxis": "x2", "yaxis": "y2",
             "line": {"color": "#FF5555", "width": 1}, "fill": "tozeroy", "fillcolor": "rgba(255, 85, 85, 0.2)"}));
 
-        for d in halving_dates()
-            .into_iter()
-            .filter(|d| *d >= first && *d <= last)
-        {
+        // Les halvings ne concernent que le bitcoin.
+        let halvings = if unit == "BTC" {
+            halving_dates()
+        } else {
+            Vec::new()
+        };
+        for d in halvings.into_iter().filter(|d| *d >= first && *d <= last) {
             fig.vline(&fmt_date(d), "rgba(255, 0, 0, 0.3)", 1.0, "dot", "paper");
         }
 
@@ -499,7 +518,7 @@ mod tests {
         assert!(sim.trades.iter().any(|t| t.action == "Fin de phase Levier"));
         let last = sim.history.last().unwrap();
         assert_eq!(last.mode, Mode::X1);
-        assert!((last.portfolio_value - last.btc_units * 120.0).abs() < 1e-6);
+        assert!((last.portfolio_value - last.units * 120.0).abs() < 1e-6);
         assert!(
             last.portfolio_value > last.buy_hold,
             "le levier sur la remontée surperforme"
@@ -549,6 +568,52 @@ mod tests {
         assert_eq!(money(1234567.891), "$1,234,567.89");
         assert_eq!(money(-5.0), "-$5.00");
         assert_eq!(money(999.999), "$1,000.00");
+    }
+
+    #[test]
+    fn unit_comes_from_ticker() {
+        let unit = |ticker: &str| {
+            SimParams {
+                ticker: ticker.into(),
+                ..params(ExitFrequency::Weekly)
+            }
+            .unit()
+        };
+        assert_eq!(unit("BTC-USD"), "BTC");
+        assert_eq!(unit(" eth-usd "), "ETH");
+        assert_eq!(unit("AAPL"), "AAPL");
+        assert_eq!(unit("GC=F"), "GC=F");
+    }
+
+    #[test]
+    fn texts_use_the_simulated_asset_name() {
+        // 200 jours depuis le 01/01/2020 : couvre le halving du 11/05/2020.
+        let values = [100.0; 200];
+        let texts = |ticker: &str| {
+            let p = SimParams {
+                ticker: ticker.into(),
+                ..params(ExitFrequency::Weekly)
+            };
+            let sim = simulate(&prices(&values), &p).unwrap();
+            let fig = serde_json::to_string(&sim.figure()).unwrap();
+            let shapes = sim.figure().layout["shapes"].as_array().map_or(0, Vec::len);
+            (fig, sim.to_csv(), sim.trades[0].details.clone(), shapes)
+        };
+
+        let (fig, csv, details, shapes) = texts("ETH-USD");
+        assert!(fig.contains("Simulation d'Investissement ETH"));
+        assert!(fig.contains("Buy & Hold ETH") && fig.contains("Prix ETH (USD)"));
+        assert!(!fig.contains("BTC"), "aucun texte BTC pour ETH : {fig}");
+        assert!(csv.starts_with("Date,ETH_Price,Portfolio_Value,Mode,ETH_Units,"));
+        assert!(details.ends_with(" ETH"));
+        assert_eq!(shapes, 0, "pas de halving pour une autre valeur que BTC");
+
+        let (fig, _, _, shapes) = texts("BTC-USD");
+        assert!(fig.contains("Buy & Hold BTC"));
+        assert_eq!(shapes, 1, "halving du 11/05/2020");
+
+        let (_, csv, _, _) = texts("GC=F");
+        assert!(csv.starts_with("Date,GC_F_Price,"));
     }
 
     #[test]

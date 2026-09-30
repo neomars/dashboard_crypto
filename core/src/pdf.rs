@@ -203,7 +203,8 @@ pub fn simulation_report(sim: &Simulation) -> Vec<u8> {
             s.performance_pct
         ),
         format!(
-            "Buy & Hold: {} ({:+.2}%)",
+            "Buy & Hold {}: {} ({:+.2}%)",
+            sim.params.unit(),
             money(s.buy_hold),
             s.buy_hold_pct
         ),

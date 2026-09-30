@@ -271,6 +271,12 @@ async function loadIndicator(ind, box) {
 
 // ---------- Simulateur ----------
 
+// Nom de la valeur simulée, tiré du ticker (même règle que SimParams::unit) : ETH-USD → ETH.
+const unitOf = (ticker) => {
+  const t = ticker.trim();
+  return (t.split("-")[0] || t).toUpperCase();
+};
+
 function renderSimulator(ind) {
   const p = state.sim || (state.sim = {
     start: "2017-01-01", end: today(), initial_capital: 10000, target_leverage: 2.0, ticker: "BTC-USD",
@@ -281,6 +287,13 @@ function renderSimulator(ind) {
   const field = (label, input) => el("label", { class: "field" }, el("span", {}, label), input);
   const bind = (key, type, attrs = {}) => el("input", { type, value: p[key], ...attrs,
     onchange: (e) => { p[key] = type === "number" || type === "range" ? Number(e.target.value) : e.target.value; run(); } });
+  // Sous-titre mis à jour pendant la saisie du ticker.
+  const subtitle = el("small", {});
+  const setSubtitle = (ticker) => {
+    const unit = unitOf(ticker);
+    subtitle.textContent = unit ? `(valeur simulée : ${unit}, aucune position en stablecoin)` : "(aucune position en stablecoin)";
+  };
+  setSubtitle(p.ticker);
 
   const dropOut = el("output", {}, p.drop_pct);
   const drop = el("input", { type: "range", min: 1, max: 50, step: 0.5, value: p.drop_pct,
@@ -290,14 +303,15 @@ function renderSimulator(ind) {
     ["Journalière", "Hebdomadaire", "Mensuelle"].map((f) => el("option", { value: f, selected: f === p.exit_frequency }, f)));
 
   main.replaceChildren(
-    el("h1", {}, `${ind.icon} ${ind.name} `, el("small", {}, "(BTC est la valeur par défaut, aucune position en stablecoin)")),
+    el("h1", {}, `${ind.icon} ${ind.name} `, subtitle),
     el("p", { class: "muted" }, ind.description),
     el("div", { class: "controls" },
       field("Date de début", bind("start", "date")),
       field("Date de fin", bind("end", "date")),
       field("Investissement initial (USD)", bind("initial_capital", "number", { step: 100, min: 1 })),
       field("Effet de levier cible", bind("target_leverage", "number", { step: 0.1, min: 1 })),
-      field("Ticker Yahoo Finance", bind("ticker", "text", { title: "Exemples : BTC-USD, ETH-USD, SOL-USD, AAPL, GC=F" }))),
+      field("Ticker Yahoo Finance", bind("ticker", "text", { title: "Exemples : BTC-USD, ETH-USD, SOL-USD, AAPL, GC=F",
+        oninput: (e) => setSubtitle(e.target.value) }))),
     el("div", { class: "controls" },
       el("label", { class: "field" }, el("span", {}, "Baisse déclencheur (%) : ", dropOut), drop),
       field("Fréquence de sortie", freq),
@@ -326,7 +340,7 @@ async function runSimulation(ind, box) {
   if (id !== state.requestId) return;
 
   const s = res.summary;
-  const unit = p.ticker.split("-")[0];
+  const unit = res.unit;
   const metric = (label, value, delta, sub, inverse) => el("div", { class: "metric" },
     el("div", { class: "label" }, label), el("div", { class: "value" }, value),
     delta != null && el("div", { class: `delta ${(delta >= 0) !== !!inverse ? "up" : "down"}` }, `${delta >= 0 ? "▲" : "▼"} ${fmtNumber(delta)} %`),
@@ -340,7 +354,7 @@ async function runSimulation(ind, box) {
       metric("Capital final (USD)", `${fmtNumber(s.final_equity)} $`, s.performance_pct, `Initial : ${fmtNumber(p.initial_capital)} $`),
       metric(`Capital final (${unit})`, `${fmtNumber(s.final_units, 4)} ${unit}`, null, `Initial : ${fmtNumber(s.initial_units, 4)} ${unit}`),
       metric("Drawdown max", `${fmtNumber(s.max_drawdown)} %`),
-      metric("Buy & Hold", `${fmtNumber(s.buy_hold)} $`, s.buy_hold_pct)),
+      metric(`Buy & Hold ${unit}`, `${fmtNumber(s.buy_hold)} $`, s.buy_hold_pct)),
   );
   if (s.liquidated) box.append(notice("error", "💀 ALERTE : votre stratégie a été liquidée ! Le capital est tombé à zéro suite aux pertes sous levier."));
 

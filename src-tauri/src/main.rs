@@ -39,6 +39,8 @@ async fn render_indicator(
 
 #[derive(Serialize)]
 struct SimulationView {
+    /// Nom de la valeur simulée (BTC, ETH, AAPL...), pour les textes de l'interface.
+    unit: String,
     figure: Figure,
     summary: Summary,
     trades: Vec<Trade>,
@@ -63,6 +65,7 @@ async fn run_simulation(
         .collect();
     let sim = simulator::simulate(&prices, &params)?;
     let view = SimulationView {
+        unit: params.unit(),
         figure: sim.figure(),
         summary: sim.summary(),
         trades: sim.trades.clone(),
