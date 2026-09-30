@@ -1,12 +1,15 @@
 name: Build
 
-# Vérifie le code (format, clippy, tests) puis construit le paquet Debian de
-# l'application (dashboard-crypto_<version>_amd64.deb), l'installe sur le
-# runner pour vérifier qu'il démarre, et le publie.
+# Vérifie le code (format, clippy, tests) puis construit l'application :
+# - Linux : paquet Debian dashboard-crypto_<version>_amd64.deb ;
+# - Windows : installateur dashboard-crypto_<version>_x64-setup.exe (NSIS) et
+#   exécutable portable dashboard-crypto_<version>_x64-portable.exe.
+# Chaque paquet est installé sur le runner pour vérifier que l'application
+# démarre, puis publié (artefacts du workflow, Release sur tag).
 #
-# Lancement : pousser un tag `v*` pour une vraie release, ou manuellement via
-# « Run workflow » (onglet Actions) pour tester un build sans tag. Les tests
-# tournent aussi sur chaque pull request.
+# Lancement : à chaque pull request (les paquets sont alors téléchargeables
+# depuis les artefacts du workflow), en poussant un tag `v*` pour une vraie
+# release, ou manuellement via « Run workflow » (onglet Actions).
 #
 # La version vient du tag : pousser v2.1.0 construit la version 2.1.0. Un
 # lancement manuel peut recevoir une version ; sinon celle des fichiers du dépôt.
@@ -59,9 +62,8 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
-  build-deb:
+  build-linux:
     needs: test
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -113,14 +115,87 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dashboard-crypto-deb
+          name: dashboard-crypto-linux
           path: target/release/bundle/deb/*.deb
           if-no-files-found: error
 
-  # Uniquement sur un vrai tag `v*` : publie le .deb dans une Release GitHub
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2.9.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Fixer la version depuis le tag
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.version }}
+        run: node scripts/set-version.mjs "$VERSION"
+
+      # Les tests tournent aussi sous Windows (chemins, fichiers de configuration...).
+      - name: Tests (Windows)
+        run: |
+          npm run vendor
+          cargo test --workspace
+
+      # Utilise tauri.windows.conf.json : installateur NSIS.
+      - name: Construire l'installateur
+        run: npm run build
+
+      # Tauri nomme l'installateur d'après le nom affiché (« Dashboard Crypto_2.0.0_x64-setup.exe ») :
+      # noms sans espace, et exécutable portable (sans installation) à côté.
+      - name: Noms de fichiers ASCII et exécutable portable
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "Installateur NSIS introuvable" }
+          Copy-Item $setup.FullName "dist/dashboard-crypto_${version}_x64-setup.exe"
+          Copy-Item target/release/dashboard-crypto.exe "dist/dashboard-crypto_${version}_x64-portable.exe"
+          Get-ChildItem dist
+
+      # Installation silencieuse (/S) pour l'utilisateur courant, puis lancement :
+      # l'application doit toujours tourner après 15 s (pas de plantage au démarrage).
+      - name: Tester l'installation
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist/*-setup.exe | Select-Object -First 1
+          $install = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installateur : code de sortie $($install.ExitCode)" }
+          $dirs = @("$env:LOCALAPPDATA\Dashboard Crypto", "$env:LOCALAPPDATA\Programs") | Where-Object { Test-Path $_ }
+          # Sans dossier d'installation, Get-ChildItem chercherait dans le dépôt (faux positif).
+          if (-not $dirs) { throw "Aucun dossier d'installation trouvé dans $env:LOCALAPPDATA" }
+          $exe = Get-ChildItem $dirs -Recurse -Filter dashboard-crypto.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "dashboard-crypto.exe introuvable après installation" }
+          Write-Host "Installé : $($exe.FullName)"
+          $app = Start-Process $exe.FullName -PassThru
+          Start-Sleep -Seconds 15
+          if ($app.HasExited) { throw "L'application s'est arrêtée au démarrage (code $($app.ExitCode))" }
+          Stop-Process -Id $app.Id -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-crypto-windows
+          path: dist/*.exe
+          if-no-files-found: error
+
+  # Uniquement sur un vrai tag `v*` : publie les paquets dans une Release GitHub
   # (liens permanents, contrairement aux artefacts qui expirent après 90 jours).
   release:
-    needs: build-deb
+    needs: [build-linux, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -128,12 +203,15 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: dashboard-crypto-deb
+          pattern: dashboard-crypto-*
+          merge-multiple: true
           path: dist
 
       - name: Publier la Release GitHub
         uses: softprops/action-gh-release@v3.0.3
         with:
-          files: dist/*.deb
+          files: |
+            dist/*.deb
+            dist/*.exe
           generate_release_notes: true
           fail_on_unmatched_files: true

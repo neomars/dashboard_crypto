@@ -27,17 +27,18 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb"],
     "category": "Finance",
     "publisher": "neomars",
     "homepage": "https://github.com/neomars/dashboard_crypto",
     "shortDescription": "Tableau de bord d'indicateurs Bitcoin",
     "longDescription": "Indicateurs du marché Bitcoin (Fear & Greed, halvings, indicateurs on-chain, SOPR, Net Realized Profit/Loss...) et simulateur de stratégie de levier.",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
-    "linux": {
-      "deb": {
-        "section": "misc"
-      }
-    }
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "copyright": "neomars — AGPL-3.0-or-later"
   }
 }

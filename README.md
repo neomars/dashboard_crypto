@@ -1,6 +1,6 @@
 # Dashboard d'Indicateurs Crypto et Financiers
 
-Application de bureau (Linux Debian / Ubuntu) permettant de visualiser divers indicateurs du marché Bitcoin et des marchés financiers.
+Application de bureau (Linux Debian / Ubuntu et Windows) permettant de visualiser divers indicateurs du marché Bitcoin et des marchés financiers.
 
 Écrite en **Rust** avec [Tauri](https://tauri.app) : le cœur (`core/`) récupère les données et calcule les indicateurs, l'interface (`ui/`) les affiche avec Plotly.js dans une fenêtre native. La version 1.x était une application Python/Streamlit ; elle reste disponible dans l'historique git.
 
@@ -91,7 +91,7 @@ $$
 
 Le graphique du haut affiche le cours de MSTR (échelle logarithmique), chaque jour coloré selon le mNAV, avec une échelle graduée en mNAV. Le prix du BTC peut être ajouté en trait fin sur l'axe de droite. Le graphique du bas trace le mNAV, avec la parité (1,0) et les zones en fond. Le titre indique le mNAV actuel et la date de la dernière donnée de holdings ; un avertissement s'affiche si elle a plus de 45 jours.
 
-**Ajouter les achats récents** sans recompiler : section `[MSTR]` de `~/.config/dashboard-crypto/config.ini`. Une ligne par date, `BTC détenus` ou `BTC détenus, actions en circulation` (séparateurs de milliers acceptés : espace ou `_`). À date égale, ces valeurs remplacent celles du fichier.
+**Ajouter les achats récents** sans recompiler : section `[MSTR]` de `config.ini` (voir [Emplacement des fichiers](#emplacement-des-fichiers)). Une ligne par date, `BTC détenus` ou `BTC détenus, actions en circulation` (séparateurs de milliers acceptés : espace ou `_`). À date égale, ces valeurs remplacent celles du fichier.
 
 ```ini
 [MSTR]
@@ -105,7 +105,19 @@ seuils = 1.0, 1.5, 2.5
 - La précision dépend du fichier de holdings. Les BTC détenus sont connus à chaque annonce, mais le nombre d'actions n'est publié qu'environ une fois par trimestre, alors que Strategy émet des actions en continu. Le mNAV est donc sous-estimé entre deux publications. En particulier, aucun chiffre n'a été trouvé entre le 25/07/2024 et le 31/12/2024 : les émissions massives de fin 2024 ne sont prises en compte qu'au 31/12/2024.
 - Quelques valeurs d'actions (fin 2025, T1 et T2 2026) viennent de sources secondaires arrondies (GuruFocus, AlphaQuery), et les deux points de 2026 tirés du 10-K 2025 et du 10-Q T2 2026 supposent la classe B inchangée. La colonne `source` du fichier le précise.
 
-## Installation sur Debian / Ubuntu
+## Installation
+
+Les fichiers d'installation sont publiés dans les [Releases](https://github.com/neomars/dashboard_crypto/releases) du dépôt :
+
+| Système | Fichier |
+|---|---|
+| Linux Debian / Ubuntu / Mint (64 bits) | `dashboard-crypto_<version>_amd64.deb` |
+| Windows 10 / 11 (64 bits), avec installation | `dashboard-crypto_<version>_x64-setup.exe` |
+| Windows 10 / 11 (64 bits), sans installation | `dashboard-crypto_<version>_x64-portable.exe` |
+
+Aucune connexion n'est nécessaire à l'installation ; l'application a besoin d'Internet pour récupérer les données de marché.
+
+### Linux (Debian / Ubuntu)
 
 Un paquet `.deb` est publié dans les [Releases](https://github.com/neomars/dashboard_crypto/releases) du dépôt : `dashboard-crypto_<version>_amd64.deb` (Debian 12+, Ubuntu 22.04+, Mint 21+…, 64 bits).
 
@@ -116,9 +128,24 @@ sudo apt install ./dashboard-crypto_<version>_amd64.deb
 ```
 
 - **Dashboard Crypto** apparaît ensuite dans le menu des applications (commande : `dashboard-crypto`).
-- Aucune connexion n'est nécessaire à l'installation ; l'application a besoin d'Internet pour récupérer les données de marché.
 - Mise à jour : installez le nouveau `.deb` par-dessus l'ancien. Il remplace aussi l'ancienne version Python (1.x).
 - Désinstallation : `sudo apt remove dashboard-crypto`.
+
+### Windows
+
+- **Avec installation** : double-cliquez sur `…_x64-setup.exe`. L'installation se fait pour l'utilisateur courant, sans droits administrateur ; **Dashboard Crypto** apparaît ensuite dans le menu Démarrer. Pour mettre à jour, installez la nouvelle version par-dessus ; pour désinstaller : **Paramètres → Applications**.
+- **Sans installation** : lancez directement `…_x64-portable.exe`, depuis n'importe quel dossier (une clé USB par exemple).
+- Si Windows affiche « Windows a protégé votre ordinateur » (SmartScreen), cliquez sur **Informations complémentaires**, puis **Exécuter quand même** : l'application n'est pas signée numériquement, ce message est normal.
+- L'application utilise **WebView2** (Microsoft Edge), déjà présent sur Windows 10 et 11 à jour. S'il manque, l'installateur le télécharge ; la version portable ne peut pas le faire.
+
+### Emplacement des fichiers
+
+| | Linux | Windows |
+|---|---|---|
+| Configuration (`config.ini`) | `~/.config/dashboard-crypto/` | `%APPDATA%\dashboard-crypto\` |
+| Cache BGeometrics | `~/.cache/dashboard-crypto/bgeometrics/` | `%LOCALAPPDATA%\dashboard-crypto\bgeometrics\` |
+
+L'emplacement de `config.ini` peut être imposé avec la variable d'environnement `DASHBOARD_CRYPTO_CONFIG`. Le chemin exact est affiché en bas de la page **Accueil**.
 
 ## Sources de données
 
@@ -136,11 +163,11 @@ Toutes les données viennent d'API publiques et gratuites, **sans clé ni compte
 
 ### Limites de BGeometrics
 
-L'offre gratuite de BGeometrics est limitée à **8 requêtes par heure et 15 par jour**, et couvre les **4 dernières années**. Ses métriques étant mises à jour une fois par jour, l'application garde chaque réponse **12 h sur le disque** (`~/.cache/dashboard-crypto/bgeometrics/`) : afficher les 4 indicateurs concernés coûte au plus 5 requêtes par demi-journée. Si l'API refuse une requête, les dernières données connues sont affichées, avec leur date.
+L'offre gratuite de BGeometrics est limitée à **8 requêtes par heure et 15 par jour**, et couvre les **4 dernières années**. Ses métriques étant mises à jour une fois par jour, l'application garde chaque réponse **12 h sur le disque** (dossier de cache, voir [Emplacement des fichiers](#emplacement-des-fichiers)) : afficher les 4 indicateurs concernés coûte au plus 5 requêtes par demi-journée. Si l'API refuse une requête, les dernières données connues sont affichées, avec leur date.
 
 ### Noms des endpoints BGeometrics
 
-Pour chaque métrique, l'application essaie une courte liste de noms d'endpoint connus et mémorise celui qui répond. Si un indicateur ne trouve pas ses données, indiquez le nom exact (visible dans la [documentation de l'API](https://bitcoin-data.com/api/redoc.html)) sur la page **Accueil**, section **Endpoints BGeometrics**. Il est enregistré dans `~/.config/dashboard-crypto/config.ini` (emplacement modifiable avec la variable `DASHBOARD_CRYPTO_CONFIG`) :
+Pour chaque métrique, l'application essaie une courte liste de noms d'endpoint connus et mémorise celui qui répond. Si un indicateur ne trouve pas ses données, indiquez le nom exact (visible dans la [documentation de l'API](https://bitcoin-data.com/api/redoc.html)) sur la page **Accueil**, section **Endpoints BGeometrics**. Il est enregistré dans `config.ini` (voir [Emplacement des fichiers](#emplacement-des-fichiers)) :
 
 ```ini
 [BGEOMETRICS]
@@ -154,7 +181,8 @@ Une variable d'environnement `BGEOMETRICS_<CLÉ>` (ex. `BGEOMETRICS_ETF=etf-btc`
 ### Prérequis
 
 - [Rust](https://rustup.rs) (stable) et [Node.js](https://nodejs.org) 20+ (uniquement pour l'outil Tauri et Plotly.js) ;
-- les bibliothèques système de Tauri :
+- sous Windows : les [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (charge de travail « Développement Desktop en C++ ») et WebView2 ;
+- sous Linux, les bibliothèques système de Tauri :
   ```bash
   sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-3-dev libsoup-3.0-dev build-essential curl file patchelf
   ```
@@ -164,7 +192,8 @@ Une variable d'environnement `BGEOMETRICS_<CLÉ>` (ex. `BGEOMETRICS_ETF=etf-btc`
 ```bash
 npm install          # outil Tauri + Plotly.js
 npm run dev          # lance l'application en mode développement
-npm run build        # construit le paquet : target/release/bundle/deb/
+npm run build        # construit le paquet : .deb sous Linux (target/release/bundle/deb/),
+                     # installateur .exe sous Windows (target/release/bundle/nsis/)
 cargo test --workspace   # tests (après un premier `npm run vendor`)
 ```
 
@@ -172,7 +201,7 @@ Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, si
 
 ### Publier une version
 
-Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/set-version.mjs`), lance les tests, construit le `.deb`, vérifie qu'il s'installe et démarre, puis le publie dans une Release. Il peut aussi être lancé manuellement depuis l'onglet Actions.
+Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/set-version.mjs`), lance les tests (sous Linux et sous Windows), construit le `.deb` et les deux `.exe`, vérifie que chacun s'installe et démarre, puis les publie dans une Release. Il tourne aussi sur chaque pull request, dont les paquets sont téléchargeables dans les artefacts du workflow, et peut être lancé manuellement depuis l'onglet Actions.
 
 ## Structure du projet
 
@@ -186,6 +215,6 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
   - `config.rs` : lecture/écriture de `config.ini` (noms d'endpoint BGeometrics imposés, section `[MSTR]`).
   - `indicators.json` : liste des outils affichés dans la barre latérale.
   - `data/mstr_holdings.json` : BTC détenus et actions en circulation de Strategy (MSTR), avec leurs sources.
-- `src-tauri/` : application de bureau (commandes appelées par l'interface, configuration du paquet).
+- `src-tauri/` : application de bureau (commandes appelées par l'interface) et configuration des paquets : `tauri.conf.json` commun, `tauri.linux.conf.json` (`.deb`), `tauri.windows.conf.json` (installateur NSIS).
 - `ui/` : interface (HTML/CSS/JavaScript, sans étape de compilation).
 - `scripts/` : copie de Plotly.js dans `ui/vendor/`, changement de version.
