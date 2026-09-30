@@ -40,13 +40,14 @@ Soit $P_i$ le prix de clôture du jour $i$.
 On maintient à chaque instant le pic local (peak) :
 $$\text{Peak}_i = \max(P_0, P_1, \dots, P_i)$$
 Une correction est détectée lorsque :
-$$\frac{P_i}{\text{Peak}_i} - 1 \leq -0.15 \quad \text{(soit une baisse d'au moins 15 \% depuis le pic)}$$
+$$\frac{P_i}{\text{Peak}_i} - 1 \leq -0.15$$
+soit une baisse d'au moins 15 % depuis le pic.
 On enregistre alors la valeur de la correction :
 $$\text{Drop}_i = \left( \frac{P_i}{\text{Peak}_i} - 1 \right) \times 100$$
 
 ### 3. Calcul des métriques par cycle
 
-Pour chaque cycle, on obtient une liste de corrections $\{\text{Drop}_1, \text{Drop}_2, \dots, \text{Drop}_n\}$.
+Pour chaque cycle, on obtient une liste de corrections $\lbrace \text{Drop}_1, \text{Drop}_2, \dots, \text{Drop}_n \rbrace$.
 
 On calcule alors :
 
@@ -121,12 +122,12 @@ Les holdings ne sont connus qu'à des dates discrètes $t_1 < t_2 < \dots < t_K$
 **a) Report champ par champ (*forward-fill*).** Pour chaque date $t_k$ :
 
 $$
-\tilde H_k = H_j \text{ avec } j = \max\{\, i \le k : H_i \text{ publié} \,\}, \qquad \tilde N_k = N_j \text{ avec } j = \max\{\, i \le k : N_i \text{ publié} \,\}
+\tilde H_k = H_j \text{ avec } j = \max \lbrace i \le k : H_i \text{ publié} \rbrace, \qquad \tilde N_k = N_j \text{ avec } j = \max \lbrace i \le k : N_i \text{ publié} \rbrace
 $$
 
 Un point n'est retenu que lorsque les deux champs sont connus. Les points antérieurs à la première publication de $N$ sont écartés.
 
-**b) Fonction en escalier (sans interpolation).** Pour un jour quelconque $t \ge t_1$, avec $k(t) = \max\{\, k : t_k \le t \,\}$ :
+**b) Fonction en escalier (sans interpolation).** Pour un jour quelconque $t \ge t_1$, avec $k(t) = \max \lbrace k : t_k \le t \rbrace$ :
 
 $$
 H(t) = \tilde H_{k(t)}, \qquad N(t) = \tilde N_{k(t)}
@@ -151,7 +152,7 @@ Les week-ends et jours fériés n'ont pas de point : le cours de l'action n'y es
 **Décalage intra-journalier.** La clôture de MSTR a lieu à 16 h, heure de New York, soit 20 h ou 21 h UTC selon l'heure d'été. La « clôture » journalière BTC-USD de Yahoo correspond à la fin du jour UTC (minuit). Les deux prix sont donc séparés d'environ 3 à 4 heures. Le bitcoin a une volatilité annualisée d'environ 50 %. Sur $\Delta t \approx 4\,\text{h}$, l'écart-type de sa variation relative vaut environ :
 
 $$
-\sigma \sqrt{\Delta t} \approx 0{,}5 \times \sqrt{4 / (365 \times 24)} \approx 1{,}1\ \%
+\sigma \sqrt{\Delta t} \approx 0{,}5 \times \sqrt{4 / (365 \times 24)} \approx 0{,}011
 $$
 
 Ce décalage ajoute donc au mNAV journalier un bruit de l'ordre de 1 % (écart-type), non biaisé en moyenne. Il est négligeable devant les écarts entre zones (0,5 de mNAV, soit 30 à 50 %).
@@ -168,17 +169,19 @@ Pour chaque jour $t \in \mathcal T$ avec $t \ge t_1$ :
 - $H = 847\,666$ BTC (annonce du 27/09/2026) ;
 - $N = 384\,225\,751$ actions (couverture du 10-Q au 24/07/2026).
 
-Avec $P_M = 350$ \$ et $P_B = 110\,000$ \$ :
+Avec $P_M = 350$ USD et $P_B = 110\,000$ USD :
 
 $$
-\text{Cap} = 350 \times 384\,225\,751 \approx 134{,}48\ \text{Md\$}, \qquad \text{NAV} = 847\,666 \times 110\,000 \approx 93{,}24\ \text{Md\$}
+\text{Cap} = 350 \times 384\,225\,751 \approx 134{,}48 \text{ Md USD}, \qquad \text{NAV} = 847\,666 \times 110\,000 \approx 93{,}24 \text{ Md USD}
 $$
 
 $$
-\text{mNAV} = \frac{134{,}48}{93{,}24} \approx 1{,}44 \quad \text{(zone « neutre », prime de 44 \%)}
+\text{mNAV} = \frac{134{,}48}{93{,}24} \approx 1{,}44
 $$
 
-Chaque action représente $H/N \approx 0{,}002206$ BTC, soit $242{,}68$ \$ de bitcoins pour une action cotée 350 \$ : $350 / 242{,}68 \approx 1{,}44$.
+soit la zone « neutre », avec une prime de 44 %.
+
+Chaque action représente $H/N \approx 0{,}002206$ BTC, soit 242,68 USD de bitcoins pour une action cotée 350 USD : $350 / 242{,}68 \approx 1{,}44$.
 
 #### 6. Sensibilité et erreurs
 
