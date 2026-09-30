@@ -14,12 +14,13 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const replaceIn = (file, pattern, replacement) => {
   const path = join(root, file);
   const before = readFileSync(path, "utf8");
-  const after = before.replace(pattern, replacement);
-  if (after === before && !before.includes(replacement)) throw new Error(`Version introuvable dans ${file}`);
-  writeFileSync(path, after);
+  // Tester le motif (et non comparer avant/après) : la version peut déjà être la bonne.
+  if (!pattern.test(before)) throw new Error(`Version introuvable dans ${file}`);
+  writeFileSync(path, before.replace(pattern, replacement));
 };
 
-replaceIn("Cargo.toml", /(\[workspace\.package\]\nversion = )"[^"]*"/, `$1"${version}"`);
+// \r?\n : sous Windows, git extrait les fichiers avec des fins de ligne CRLF.
+replaceIn("Cargo.toml", /(\[workspace\.package\]\r?\nversion = )"[^"]*"/, `$1"${version}"`);
 replaceIn("src-tauri/tauri.conf.json", /("version": )"[^"]*"/, `$1"${version}"`);
 replaceIn("package.json", /("version": )"[^"]*"/, `$1"${version}"`);
 console.log(`Version fixée à ${version}`);
