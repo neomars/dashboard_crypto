@@ -175,10 +175,7 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 fn save_sec_user_agent(state: State<'_, AppState>, value: String) -> Result<(), String> {
     let value = value.trim();
     if !value.is_empty() && !value.contains('@') {
-        return Err(
-            "La SEC demande un nom et une adresse e-mail (ex. Jean Dupont jean.dupont@exemple.fr)."
-                .into(),
-        );
+        return Err("Adresse e-mail invalide (ex. jean.dupont@exemple.fr).".into());
     }
     if value.chars().any(char::is_control) {
         return Err("Le contact ne doit pas contenir de retour à la ligne.".into());

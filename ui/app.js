@@ -186,18 +186,6 @@ async function renderSettings(box) {
     return el("tr", {}, el("td", {}, m.label), el("td", {}, input), el("td", {}, save));
   });
 
-  const secStatus = el("div");
-  const secInput = el("input", { type: "text", value: settings.sec_user_agent, size: 40, spellcheck: "false",
-    placeholder: "Jean Dupont jean.dupont@exemple.fr" });
-  const secSave = el("button", { class: "btn", type: "button", onclick: async () => {
-    try {
-      await invoke("save_sec_user_agent", { value: secInput.value });
-      secStatus.replaceChildren(notice("success", secInput.value.trim()
-        ? "Contact SEC enregistré : il sera utilisé au prochain affichage de MSTR mNAV."
-        : "Contact SEC retiré : User-Agent par défaut."));
-    } catch (e) { secStatus.replaceChildren(notice("error", String(e))); }
-  } }, "Enregistrer");
-
   box.replaceChildren(
     el("h3", {}, "Sources de données"),
     el("p", {}, "Toutes les données viennent d'API publiques et gratuites, sans clé ni compte :"),
@@ -215,11 +203,32 @@ async function renderSettings(box) {
       "), ajoutez des lignes « AAAA-MM-JJ = BTC détenus » ou « AAAA-MM-JJ = BTC détenus, actions en circulation » dans la section ",
       el("code", {}, "[MSTR]"), " du fichier de configuration ci-dessous. Les seuils de couleur se règlent avec ", el("code", {}, "seuils = 1.0, 1.5, 2.5"), "."),
     el("h3", {}, "Contact SEC"),
-    el("p", { class: "muted" }, "L'indicateur MSTR mNAV lit les dernières publications de Strategy à la SEC (EDGAR). La SEC exige que chaque requête indique un nom et une adresse e-mail de contact ; sans cela, elle répond « HTTP 403 ». Ces informations ne sont envoyées qu'à la SEC."),
-    el("div", { class: "row" }, secInput, secSave),
-    secStatus,
+    el("p", { class: "muted" }, "L'indicateur MSTR mNAV lit les dernières publications de Strategy à la SEC (EDGAR). La SEC exige que chaque requête indique une adresse e-mail de contact ; sans elle, elle répond « HTTP 403 ». Cette adresse n'est envoyée qu'à la SEC."),
+    secContactField(settings.sec_user_agent),
     el("p", { class: "muted" }, "Fichier de configuration : ", el("code", {}, settings.config_path)),
   );
+}
+
+// Champ « e-mail de contact SEC » (page Accueil et indicateur MSTR mNAV).
+// `onSaved` est appelé après un enregistrement réussi (ex. relancer l'indicateur).
+function secContactField(value, onSaved) {
+  const status = el("div");
+  const input = el("input", { type: "email", value: value || "", size: 36, spellcheck: "false",
+    placeholder: "votre.adresse@exemple.fr", "aria-label": "E-mail de contact SEC" });
+  const save = async () => {
+    try {
+      await invoke("save_sec_user_agent", { value: input.value });
+      status.replaceChildren(notice("success", input.value.trim()
+        ? "E-mail de contact SEC enregistré."
+        : "E-mail de contact SEC retiré."));
+      if (onSaved) onSaved();
+    } catch (e) { status.replaceChildren(notice("error", String(e))); }
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+  return el("div", {},
+    el("div", { class: "row" }, el("span", {}, "E-mail de contact SEC :"), input,
+      el("button", { class: "btn", type: "button", onclick: save }, "Enregistrer")),
+    status);
 }
 
 // ---------- Indicateurs ----------
@@ -248,7 +257,15 @@ function indicatorControls(ind, refresh) {
   if (ind.id === "mstr_mnav") {
     const toggle = el("input", { type: "checkbox", checked: params.btc,
       onchange: (e) => { params.btc = e.target.checked; refresh(); } });
-    return el("div", { class: "controls" }, el("label", {}, toggle, " Afficher le prix du BTC (axe de droite)"));
+    // Pré-rempli avec l'adresse enregistrée ; un enregistrement relance la récupération SEC.
+    const contact = el("div");
+    invoke("get_settings")
+      .then((s) => contact.replaceChildren(secContactField(s.sec_user_agent, refresh)))
+      .catch(() => contact.replaceChildren(secContactField("", refresh)));
+    return el("div", {},
+      el("div", { class: "controls" }, el("label", {}, toggle, " Afficher le prix du BTC (axe de droite)")),
+      el("p", { class: "muted" }, "Les données récentes de Strategy viennent de la SEC, qui exige une adresse e-mail de contact (envoyée uniquement à la SEC)."),
+      contact);
   }
   return null;
 }

@@ -120,11 +120,11 @@ Chaque point est un triplet $(t_k, H_k, N_k)$. $H_k$ ou $N_k$ peut être absent 
 - **Priorité :** à date égale, le fichier intégré l'emporte sur la SEC, et `config.ini` sur les deux. Seules les dates postérieures au fichier apportent donc du nouveau.
 - **Diagnostic :** deux messages s'affichent au-dessus du graphique, un pour les BTC, un pour les actions. En **vert**, la récupération a réussi, avec la dernière valeur, sa date et le contrôle de cohérence. En **rouge**, l'erreur exacte (réseau, code HTTP, réponse illisible, incohérence) ; le fichier intégré est alors utilisé seul.
 - **Cache :** les réponses sont gardées 12 h en mémoire.
-- **Contact SEC :** la SEC exige que chaque requête indique un nom et une adresse e-mail ; sans cela, elle répond HTTP 403 (message rouge). Saisissez-les une fois sur la page **Accueil**, section **Contact SEC**. Ils ne sont envoyés qu'à la SEC et sont enregistrés dans `config.ini` :
+- **Contact SEC :** la SEC exige que chaque requête indique une adresse e-mail de contact ; sans elle, elle répond HTTP 403 (message rouge). Saisissez-la une fois dans le champ **E-mail de contact SEC**, au-dessus du graphique MSTR mNAV (l'indicateur se recharge aussitôt) ou sur la page **Accueil**. Elle n'est envoyée qu'à la SEC, précédée du nom de l'application, et enregistrée dans `config.ini` :
 
 ```ini
 [SEC]
-user_agent = Votre Nom votre@adresse.fr
+user_agent = votre@adresse.fr
 ```
 
 Le nombre d'actions n'est publié qu'environ une fois par trimestre : cette mise à jour n'élimine pas le biais décrit au §6, elle évite seulement de devoir saisir les nouvelles publications à la main.
