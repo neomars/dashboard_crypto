@@ -29,7 +29,7 @@ const SOURCES = [
   ["alternative.me", "https://alternative.me/crypto/fear-and-greed-index/", "indice Fear & Greed"],
   ["mempool.space", "https://mempool.space", "hauteur de bloc (estimation du prochain halving)"],
   ["Bitcoin-Dataset (GitHub)", "https://github.com/Yrzxiong/Bitcoin-Dataset", "historique du prix BTC 2010-2018"],
-  ["Strategy / SEC", "https://www.strategy.com/purchases", "BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré à l'application, complétable dans config.ini"],
+  ["Strategy / SEC EDGAR", "https://www.sec.gov/edgar/browse/?CIK=1050446", "BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré, complété à chaque affichage par les dernières publications SEC (contact requis, voir plus bas) et par config.ini"],
 ];
 
 const state = {
@@ -202,8 +202,33 @@ async function renderSettings(box) {
     el("p", { class: "muted" }, "Pour ajouter les achats annoncés depuis (", link("strategy.com/purchases", "https://www.strategy.com/purchases"),
       "), ajoutez des lignes « AAAA-MM-JJ = BTC détenus » ou « AAAA-MM-JJ = BTC détenus, actions en circulation » dans la section ",
       el("code", {}, "[MSTR]"), " du fichier de configuration ci-dessous. Les seuils de couleur se règlent avec ", el("code", {}, "seuils = 1.0, 1.5, 2.5"), "."),
+    el("h3", {}, "Contact SEC"),
+    el("p", { class: "muted" }, "L'indicateur MSTR mNAV lit les dernières publications de Strategy à la SEC (EDGAR). La SEC exige que chaque requête indique une adresse e-mail de contact ; sans elle, elle répond « HTTP 403 ». Cette adresse n'est envoyée qu'à la SEC."),
+    secContactField(settings.sec_user_agent),
     el("p", { class: "muted" }, "Fichier de configuration : ", el("code", {}, settings.config_path)),
   );
+}
+
+// Champ « e-mail de contact SEC » (page Accueil et indicateur MSTR mNAV).
+// `onSaved` est appelé après un enregistrement réussi (ex. relancer l'indicateur).
+function secContactField(value, onSaved) {
+  const status = el("div");
+  const input = el("input", { type: "email", value: value || "", size: 36, spellcheck: "false",
+    placeholder: "votre.adresse@exemple.fr", "aria-label": "E-mail de contact SEC" });
+  const save = async () => {
+    try {
+      await invoke("save_sec_user_agent", { value: input.value });
+      status.replaceChildren(notice("success", input.value.trim()
+        ? "E-mail de contact SEC enregistré."
+        : "E-mail de contact SEC retiré."));
+      if (onSaved) onSaved();
+    } catch (e) { status.replaceChildren(notice("error", String(e))); }
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+  return el("div", {},
+    el("div", { class: "row" }, el("span", {}, "E-mail de contact SEC :"), input,
+      el("button", { class: "btn", type: "button", onclick: save }, "Enregistrer")),
+    status);
 }
 
 // ---------- Indicateurs ----------
@@ -232,7 +257,15 @@ function indicatorControls(ind, refresh) {
   if (ind.id === "mstr_mnav") {
     const toggle = el("input", { type: "checkbox", checked: params.btc,
       onchange: (e) => { params.btc = e.target.checked; refresh(); } });
-    return el("div", { class: "controls" }, el("label", {}, toggle, " Afficher le prix du BTC (axe de droite)"));
+    // Pré-rempli avec l'adresse enregistrée ; un enregistrement relance la récupération SEC.
+    const contact = el("div");
+    invoke("get_settings")
+      .then((s) => contact.replaceChildren(secContactField(s.sec_user_agent, refresh)))
+      .catch(() => contact.replaceChildren(secContactField("", refresh)));
+    return el("div", {},
+      el("div", { class: "controls" }, el("label", {}, toggle, " Afficher le prix du BTC (axe de droite)")),
+      el("p", { class: "muted" }, "Les données récentes de Strategy viennent de la SEC, qui exige une adresse e-mail de contact (envoyée uniquement à la SEC)."),
+      contact);
   }
   return null;
 }

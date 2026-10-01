@@ -208,11 +208,14 @@ impl DataProvider {
     /// Document SEC EDGAR (JSON ou HTML), gardé 12 h en mémoire.
     pub async fn sec_text(&self, url: &str) -> Result<Arc<String>, String> {
         self.cached(&format!("sec:{url}"), 12 * HOUR, || async {
-            let custom = self.config.get("SEC", "user_agent");
+            let custom = self.config.sec_user_agent();
+            // Adresse seule : précédée du nom de l'application (« Nom e-mail » attendu par la SEC).
             let agent = if custom.is_empty() {
                 SEC_USER_AGENT.to_string()
-            } else {
+            } else if custom.contains(char::is_whitespace) {
                 custom
+            } else {
+                format!("dashboard-crypto {custom}")
             };
             let resp = self
                 .http
@@ -228,12 +231,13 @@ impl DataProvider {
                     .await
                     .map_err(|e| format!("réponse illisible ({url}) : {e}")),
                 403 => Err(format!(
-                    "HTTP 403 ({url}) : la SEC refuse la requête. Elle exige un User-Agent avec un contact : \
-                     ajoutez « user_agent = Votre Nom votre@adresse.fr » dans la section [SEC] de {}.",
+                    "HTTP 403 ({url}) : la SEC refuse la requête sans contact identifié. \
+                     Indiquez votre adresse e-mail dans le champ « E-mail de contact SEC » (au-dessus du graphique ou sur la page Accueil), \
+                     ou « user_agent = votre@adresse.fr » dans la section [SEC] de {}",
                     self.config.path().display()
                 )),
                 429 => Err(format!(
-                    "HTTP 429 ({url}) : trop de requêtes vers la SEC, réessayez dans quelques minutes."
+                    "HTTP 429 ({url}) : trop de requêtes vers la SEC, réessayez dans quelques minutes"
                 )),
                 code => Err(format!("HTTP {code} ({url})")),
             }

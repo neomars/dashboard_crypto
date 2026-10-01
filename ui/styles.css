@@ -99,7 +99,7 @@ h1 small { font-size: 14px; font-weight: 400; color: var(--muted); }
 .radios { display: flex; gap: 14px; flex-wrap: wrap; }
 .radios label { cursor: pointer; }
 
-input[type="text"], input[type="password"], input[type="number"], input[type="date"], select {
+input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="date"], select {
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);
