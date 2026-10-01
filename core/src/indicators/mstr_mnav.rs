@@ -420,107 +420,147 @@ fn fmt_day(d: NaiveDate) -> String {
     d.format("%d/%m/%Y").to_string()
 }
 
-/// Nombre d'actions : faits XBRL, vérifiés contre le fichier intégré aux dates
-/// communes. Seules les dates postérieures au fichier sont ajoutées.
-async fn sec_shares(data: &DataProvider, known: &[HoldingsPoint], out: &mut SecUpdate) {
-    let url = sec::shares_concept_url();
-    let facts = match data.sec_text(&url).await.and_then(|body| {
-        let v = serde_json::from_str(&body).map_err(|e| format!("JSON illisible ({url}) : {e}"))?;
-        sec::parse_shares_concept(&v)
-    }) {
-        Ok(f) if !f.is_empty() => f,
-        Ok(_) => {
-            out.notices.push((
-                Level::Error,
-                "SEC, nombre d'actions : aucune valeur publiée trouvée. Fichier intégré utilisé."
-                    .into(),
-            ));
-            return;
-        }
-        Err(e) => {
-            out.notices.push((Level::Error, format!("SEC, nombre d'actions : échec de la récupération, {}. Fichier intégré utilisé.", e.trim_end_matches('.'))));
-            return;
-        }
-    };
+/// Nombre maximal de 10-Q/10-K récents lus à chaque mise à jour.
+const MAX_REPORTS: usize = 3;
 
+/// Nombre d'actions : page de couverture des 10-Q/10-K déposés depuis la
+/// dernière date connue, plus le dernier déjà couvert par le fichier intégré,
+/// qui sert de contrôle de cohérence.
+async fn sec_shares(
+    data: &DataProvider,
+    filings: &[sec::Filing],
+    known: &[HoldingsPoint],
+    out: &mut SecUpdate,
+) {
     let known_shares: BTreeMap<NaiveDate, f64> = known
         .iter()
         .filter_map(|p| Some((p.date, p.shares_outstanding?)))
         .collect();
-    let mut compared = 0;
-    let mut worst: Option<(f64, &sec::SharesFact, f64)> = None;
-    for f in &facts {
-        if let Some(&k) = known_shares.get(&f.date) {
-            compared += 1;
-            let gap = f.shares / k - 1.0;
-            if worst.is_none_or(|(w, _, _)| gap.abs() > w.abs()) {
-                worst = Some((gap, f, k));
-            }
+    let last_known = known_shares.keys().next_back().copied();
+
+    let mut reports: Vec<&sec::Filing> = filings
+        .iter()
+        .filter(|f| sec::is_periodic_report(&f.form))
+        .collect();
+    reports.sort_by_key(|f| f.filing_date);
+    let is_new = |f: &&sec::Filing| last_known.is_none_or(|d| f.filing_date > d);
+    let newer: Vec<&sec::Filing> = reports.iter().copied().filter(is_new).collect();
+    let skipped = newer.len().saturating_sub(MAX_REPORTS);
+    let mut to_read: Vec<&sec::Filing> = newer[skipped..].to_vec();
+    if let Some(check) = reports.iter().copied().rfind(|f| !is_new(f)) {
+        to_read.insert(0, check);
+    }
+    if to_read.is_empty() {
+        out.notices.push((
+            Level::Error,
+            "SEC, nombre d'actions : aucun 10-Q ni 10-K dans la liste des dépôts. Fichier intégré utilisé.".into(),
+        ));
+        return;
+    }
+
+    let mut facts: Vec<(&sec::Filing, sec::SharesFact)> = Vec::new();
+    let mut failures: Vec<String> = Vec::new();
+    for f in to_read {
+        let label = format!("{} du {}", f.form, fmt_day(f.filing_date));
+        match data.sec_text(&f.document_url()).await {
+            Ok(html) => match sec::parse_cover_shares(&html) {
+                Some(fact) => facts.push((f, fact)),
+                None => failures.push(format!(
+                    "{label} : nombre d'actions introuvable en page de couverture"
+                )),
+            },
+            Err(e) => failures.push(format!("{label} : {}", e.trim_end_matches('.'))),
         }
     }
-    if let Some((gap, f, k)) = worst.filter(|(gap, _, _)| gap.abs() > SHARES_TOLERANCE) {
+    if facts.is_empty() {
         out.notices.push((
             Level::Error,
             format!(
-                "SEC, nombre d'actions : incohérent avec le fichier intégré au {} ({} ({}) contre {} dans le fichier, écart {:+.1} %). \
-                 Classe d'actions manquante ? Valeurs SEC ignorées, fichier intégré utilisé.",
-                fmt_day(f.date), group_thousands(f.shares), f.form, group_thousands(k), gap * 100.0
+                "SEC, nombre d'actions : échec, {}. Fichier intégré utilisé.",
+                failures.join(" ; ")
             ),
         ));
         return;
     }
 
-    let last_known = known_shares.keys().next_back().copied();
+    let mut compared = 0;
+    let mut worst: Option<(f64, NaiveDate, f64, f64)> = None; // (écart, date, SEC, fichier)
+    for (_, fact) in &facts {
+        if let Some(&k) = known_shares.get(&fact.date) {
+            compared += 1;
+            let gap = fact.shares / k - 1.0;
+            if worst.is_none_or(|(w, ..)| gap.abs() > w.abs()) {
+                worst = Some((gap, fact.date, fact.shares, k));
+            }
+        }
+    }
+    if let Some((gap, date, sec_value, k)) = worst.filter(|(gap, ..)| gap.abs() > SHARES_TOLERANCE)
+    {
+        out.notices.push((
+            Level::Error,
+            format!(
+                "SEC, nombre d'actions : incohérent avec le fichier intégré au {} ({} à la SEC contre {} dans le fichier, écart {:+.1} %). \
+                 Valeurs SEC ignorées, fichier intégré utilisé.",
+                fmt_day(date), group_thousands(sec_value), group_thousands(k), gap * 100.0
+            ),
+        ));
+        return;
+    }
+
     let new: Vec<&sec::SharesFact> = facts
         .iter()
-        .filter(|f| last_known.is_none_or(|d| f.date > d))
+        .map(|(_, fact)| fact)
+        .filter(|fact| last_known.is_none_or(|d| fact.date > d))
         .collect();
-    out.points.extend(new.iter().map(|f| HoldingsPoint {
-        date: f.date,
+    out.points.extend(new.iter().map(|fact| HoldingsPoint {
+        date: fact.date,
         btc_holdings: None,
-        shares_outstanding: Some(f.shares),
+        shares_outstanding: Some(fact.shares),
     }));
-    let last = facts.last().expect("non vide");
+    let (last_filing, last) = facts.last().expect("non vide");
     let check = match worst {
-        Some((gap, _, _)) => format!(
-            "vérifié sur {compared} date(s) communes avec le fichier intégré (écart max {:.2} %)",
+        Some((gap, ..)) => format!(
+            "vérifié sur {compared} date(s) commune(s) avec le fichier intégré (écart max {:.2} %)",
             gap.abs() * 100.0
         ),
         None => "aucune date commune avec le fichier intégré pour vérifier".into(),
     };
-    out.notices.push((
-        Level::Success,
-        format!(
-            "SEC, nombre d'actions : OK. Dernière valeur publiée {} au {} ({}), {} nouvelle(s) valeur(s) ajoutée(s) ; {check}.",
-            group_thousands(last.shares), fmt_day(last.date), last.form, new.len()
-        ),
-    ));
+    let summary = format!(
+        "Dernière valeur publiée {} au {} ({}), {} nouvelle(s) valeur(s) ajoutée(s) ; {check}",
+        group_thousands(last.shares),
+        fmt_day(last.date),
+        last_filing.form,
+        new.len()
+    );
+    if failures.is_empty() {
+        out.notices.push((
+            Level::Success,
+            format!("SEC, nombre d'actions : OK. {summary}."),
+        ));
+    } else {
+        out.notices.push((
+            Level::Error,
+            format!(
+                "SEC, nombre d'actions : {summary}, mais {} document(s) illisible(s) : {}.",
+                failures.len(),
+                failures.join(" ; ")
+            ),
+        ));
+    }
 }
 
 /// BTC détenus : 8-K déposés depuis la dernière date connue.
-async fn sec_btc(data: &DataProvider, known: &[HoldingsPoint], out: &mut SecUpdate) {
+async fn sec_btc(
+    data: &DataProvider,
+    filings: &[sec::Filing],
+    known: &[HoldingsPoint],
+    out: &mut SecUpdate,
+) {
     let last_known = known
         .iter()
         .filter(|p| p.btc_holdings.is_some())
         .map(|p| p.date)
         .max();
-    let url = sec::submissions_url();
-    let filings = match data.sec_text(&url).await.and_then(|body| {
-        let v = serde_json::from_str(&body).map_err(|e| format!("JSON illisible ({url}) : {e}"))?;
-        sec::parse_submissions(&v)
-    }) {
-        Ok(f) => f,
-        Err(e) => {
-            out.notices.push((
-                Level::Error,
-                format!(
-                    "SEC, BTC détenus : échec de la liste des dépôts, {}. Fichier intégré utilisé.",
-                    e.trim_end_matches('.')
-                ),
-            ));
-            return;
-        }
-    };
     let mut recent: Vec<&sec::Filing> = filings
         .iter()
         .filter(|f| f.form == "8-K" && last_known.is_none_or(|d| f.filing_date > d))
@@ -546,7 +586,11 @@ async fn sec_btc(data: &DataProvider, known: &[HoldingsPoint], out: &mut SecUpda
                     found.push((f.date(), btc));
                 }
             }
-            Err(e) => failures.push(format!("8-K du {} : {e}", fmt_day(f.filing_date))),
+            Err(e) => failures.push(format!(
+                "8-K du {} : {}",
+                fmt_day(f.filing_date),
+                e.trim_end_matches('.')
+            )),
         }
     }
     out.points
@@ -593,8 +637,27 @@ pub async fn sec_update(data: &DataProvider) -> SecUpdate {
     let cfg = parse_config(&data.config().section(CONFIG_SECTION));
     let known = merge_points(embedded_points(), &cfg.points);
     let mut out = SecUpdate::default();
-    sec_btc(data, &known, &mut out).await;
-    sec_shares(data, &known, &mut out).await;
+    let url = sec::submissions_url();
+    let filings = match data.sec_text(&url).await.and_then(|body| {
+        let v = serde_json::from_str(&body).map_err(|e| format!("JSON illisible ({url}) : {e}"))?;
+        sec::parse_submissions(&v)
+    }) {
+        Ok(f) => f,
+        Err(e) => {
+            let e = e.trim_end_matches('.');
+            for what in ["BTC détenus", "nombre d'actions"] {
+                out.notices.push((
+                    Level::Error,
+                    format!(
+                        "SEC, {what} : échec de la liste des dépôts, {e}. Fichier intégré utilisé."
+                    ),
+                ));
+            }
+            return out;
+        }
+    };
+    sec_btc(data, &filings, &known, &mut out).await;
+    sec_shares(data, &filings, &known, &mut out).await;
     out
 }
 
@@ -675,7 +738,7 @@ mod tests {
     use crate::data::parse_ymd as d;
     use serde_json::json;
 
-    fn sec_provider(name: &str, submissions: &str, concept: &str) -> DataProvider {
+    fn sec_provider(name: &str, submissions: &str) -> DataProvider {
         let dir = std::env::temp_dir().join(format!(
             "dashboard-crypto-sec-{}-{name}",
             std::process::id()
@@ -683,18 +746,8 @@ mod tests {
         let data = DataProvider::new(Config::new(dir.join("config.ini")))
             .with_cache_dir(dir.join("cache"));
         data.seed_sec(&sec::submissions_url(), submissions);
-        data.seed_sec(&sec::shares_concept_url(), concept);
         data
     }
-
-    /// Faits XBRL cohérents avec le fichier intégré (classes A et B au 22/07/2021,
-    /// total au 24/07/2026), plus une valeur postérieure au fichier.
-    const CONCEPT_OK: &str = r#"{"units": {"shares": [
-        {"end": "2021-07-22", "val": 7783443, "accn": "a", "form": "10-Q", "filed": "2021-07-29"},
-        {"end": "2021-07-22", "val": 1964025, "accn": "a", "form": "10-Q", "filed": "2021-07-29"},
-        {"end": "2026-07-24", "val": 384225751, "accn": "b", "form": "10-Q", "filed": "2026-07-30"},
-        {"end": "2026-10-20", "val": 395000000, "accn": "c", "form": "10-Q", "filed": "2026-10-28"}
-    ]}}"#;
 
     fn submissions(filings: &[(&str, &str, &str, &str)]) -> String {
         let col = |k: usize| {
@@ -709,14 +762,22 @@ mod tests {
         .to_string()
     }
 
-    fn filing(accn: &str, date: &str, doc: &str) -> sec::Filing {
+    fn filing(accn: &str, form: &str, date: &str, doc: &str) -> sec::Filing {
         sec::Filing {
             accession: accn.into(),
-            form: "8-K".into(),
+            form: form.into(),
             filing_date: d(date),
             report_date: Some(d(date)),
             primary_document: doc.into(),
         }
+    }
+
+    /// Page de couverture d'un 10-Q (texte).
+    fn cover(date: &str, class_a: &str, class_b: Option<&str>) -> String {
+        let b = class_b.map_or(String::new(), |b| {
+            format!(" and {b} shares of class B common stock")
+        });
+        format!("<p>As of {date}, the registrant had {class_a} shares of class A common stock{b} outstanding.</p>")
     }
 
     #[tokio::test]
@@ -724,17 +785,27 @@ mod tests {
         let subs = submissions(&[
             ("0001-26-000001", "8-K", "2026-10-05", "buy.htm"),
             ("0001-26-000002", "8-K", "2026-10-06", "vote.htm"),
-            ("0001-26-000003", "10-Q", "2026-10-28", "q.htm"),
+            ("0001-26-000003", "10-Q", "2026-10-28", "q3.htm"),
+            ("0001-26-000005", "10-Q", "2026-07-29", "q2.htm"),
             ("0001-26-000004", "8-K", "2026-09-01", "old.htm"),
         ]);
-        let data = sec_provider("ok", &subs, CONCEPT_OK);
+        let data = sec_provider("ok", &subs);
         data.seed_sec(
-            &filing("0001-26-000001", "2026-10-05", "buy.htm").document_url(),
+            &filing("0001-26-000001", "8-K", "2026-10-05", "buy.htm").document_url(),
             "<p>As of October 4, 2026, the Company held an aggregate of approximately 851,200 bitcoins.</p>",
         );
         data.seed_sec(
-            &filing("0001-26-000002", "2026-10-06", "vote.htm").document_url(),
+            &filing("0001-26-000002", "8-K", "2026-10-06", "vote.htm").document_url(),
             "<p>Item 5.07 Submission of Matters to a Vote</p>",
+        );
+        // 10-Q déjà couvert par le fichier (contrôle : 384 225 751 au 24/07/2026), puis un nouveau.
+        data.seed_sec(
+            &filing("0001-26-000005", "10-Q", "2026-07-29", "q2.htm").document_url(),
+            &cover("July 24, 2026", "364,585,501", Some("19,640,250")),
+        );
+        data.seed_sec(
+            &filing("0001-26-000003", "10-Q", "2026-10-28", "q3.htm").document_url(),
+            &cover("October 20, 2026", "375,359,750", Some("19,640,250")),
         );
 
         let up = sec_update(&data).await;
@@ -754,7 +825,11 @@ mod tests {
         assert!(
             up.notices[0].1.contains("2 8-K") && up.notices[0].1.contains("851\u{202F}200 BTC")
         );
-        assert!(up.notices[1].1.contains("vérifié sur 2 date(s)"));
+        assert!(
+            up.notices[1].1.contains("vérifié sur 1 date(s)") && up.notices[1].1.contains("(10-Q)"),
+            "{}",
+            up.notices[1].1
+        );
 
         let (h, _, _) = load_holdings_with(data.config(), &up.points);
         let last = h.last().unwrap();
@@ -764,14 +839,16 @@ mod tests {
     #[tokio::test]
     async fn sec_update_reports_up_to_date_and_rejects_inconsistent_shares() {
         // Classe B absente : ~5 % d'actions en moins que le fichier.
-        let concept = r#"{"units": {"shares": [
-            {"end": "2021-07-22", "val": 7783443, "accn": "a", "form": "10-Q", "filed": "2021-07-29"},
-            {"end": "2026-10-20", "val": 395000000, "accn": "c", "form": "10-Q", "filed": "2026-10-28"}
-        ]}}"#;
         let data = sec_provider(
             "stale",
-            &submissions(&[("0001-26-000004", "8-K", "2026-09-01", "old.htm")]),
-            concept,
+            &submissions(&[
+                ("0001-26-000004", "8-K", "2026-09-01", "old.htm"),
+                ("0001-26-000005", "10-Q", "2026-07-29", "q2.htm"),
+            ]),
+        );
+        data.seed_sec(
+            &filing("0001-26-000005", "10-Q", "2026-07-29", "q2.htm").document_url(),
+            &cover("July 24, 2026", "364,585,501", None),
         );
         let up = sec_update(&data).await;
         assert!(up.points.is_empty());
@@ -787,12 +864,29 @@ mod tests {
 
     #[tokio::test]
     async fn sec_update_reports_unreadable_responses() {
-        let data = sec_provider("bad", "<html>maintenance</html>", "{}");
+        let data = sec_provider("bad", "<html>maintenance</html>");
         let up = sec_update(&data).await;
         assert!(up.points.is_empty());
         assert_eq!(up.notices.len(), 2);
         assert!(up.notices.iter().all(|(l, _)| matches!(l, Level::Error)));
         assert!(up.notices[0].1.contains("JSON illisible"));
+
+        // Couverture sans nombre d'actions.
+        let data = sec_provider(
+            "nocover",
+            &submissions(&[("0001-26-000005", "10-Q", "2026-07-29", "q2.htm")]),
+        );
+        data.seed_sec(
+            &filing("0001-26-000005", "10-Q", "2026-07-29", "q2.htm").document_url(),
+            "<p>Quarterly report</p>",
+        );
+        let up = sec_update(&data).await;
+        assert!(matches!(up.notices[1].0, Level::Error));
+        assert!(
+            up.notices[1].1.contains("introuvable"),
+            "{}",
+            up.notices[1].1
+        );
     }
 
     fn p(date: &str, btc: Option<f64>, shares: Option<f64>) -> HoldingsPoint {

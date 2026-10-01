@@ -104,14 +104,23 @@ fn provider() -> DataProvider {
     data.seed_ticker_history("BTC-USD", candles("2014-09-17", 0.05));
     data.seed_ticker_history("ETH-USD", candles("2017-11-09", 0.004));
     data.seed_ticker_history("MSTR", mstr_candles(&candles("2014-09-17", 0.05)));
-    // SEC hors ligne : aucun nouveau 8-K, nombre d'actions identique au fichier intégré.
+    // SEC hors ligne : aucun nouveau 8-K, dernier 10-Q identique au fichier intégré.
+    let q2 = dashboard_core::sec::Filing {
+        accession: "0001-26-000005".into(),
+        form: "10-Q".into(),
+        filing_date: d("2026-07-29"),
+        report_date: None,
+        primary_document: "q2.htm".into(),
+    };
     data.seed_sec(
         &dashboard_core::sec::submissions_url(),
-        r#"{"filings": {"recent": {"accessionNumber": [], "form": [], "filingDate": [], "reportDate": [], "primaryDocument": []}}}"#,
+        r#"{"filings": {"recent": {"accessionNumber": ["0001-26-000005"], "form": ["10-Q"],
+            "filingDate": ["2026-07-29"], "reportDate": [""], "primaryDocument": ["q2.htm"]}}}"#,
     );
     data.seed_sec(
-        &dashboard_core::sec::shares_concept_url(),
-        r#"{"units": {"shares": [{"end": "2026-07-24", "val": 384225751, "accn": "b", "form": "10-Q", "filed": "2026-07-30"}]}}"#,
+        &q2.document_url(),
+        "<p>As of July 24, 2026, the registrant had 364,585,501 shares of class A common stock \
+         and 19,640,250 shares of class B common stock outstanding.</p>",
     );
     data.seed_fear_greed(
         days("2018-02-01", 1)

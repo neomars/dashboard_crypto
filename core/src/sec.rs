@@ -1,21 +1,20 @@
 //! SEC EDGAR (<https://www.sec.gov/edgar>) : dernières publications de
 //! Strategy Inc. (MSTR), pour compléter le fichier de holdings intégré.
 //!
-//! - **Actions en circulation** : API XBRL `companyconcept`, fait
-//!   `dei:EntityCommonStockSharesOutstanding` (page de couverture des 10-Q et
-//!   10-K). Un fait par classe d'actions (A et B) : les valeurs d'un même dépôt
-//!   et d'une même date sont additionnées.
+//! - **Actions en circulation** : page de couverture des 10-Q et 10-K, en
+//!   XBRL intégré (balises `dei:EntityCommonStockSharesOutstanding`, une par
+//!   classe d'actions A et B, additionnées). L'API `companyconcept` de la SEC
+//!   n'expose pas ces valeurs déclarées par classe (HTTP 404).
 //! - **BTC détenus** : texte des 8-K (annonces d'achat), lu par motifs fixes :
 //!   phrase « held an aggregate of approximately N bitcoins » ou colonne
 //!   « Aggregate BTC Holdings » du tableau des achats.
 //!
-//! Gratuit et sans clé. La SEC exige un User-Agent identifiant l'application
-//! (section `[SEC]`, clé `user_agent` de config.ini pour le personnaliser).
+//! Gratuit et sans clé. La SEC exige un contact (adresse e-mail) dans le
+//! User-Agent (section `[SEC]`, clé `user_agent` de config.ini).
 
 use chrono::NaiveDate;
 use regex::Regex;
 use serde_json::Value;
-use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 /// Identifiant SEC (CIK) de Strategy Inc.
@@ -23,12 +22,6 @@ pub const MSTR_CIK: &str = "0001050446";
 
 pub fn submissions_url() -> String {
     format!("https://data.sec.gov/submissions/CIK{MSTR_CIK}.json")
-}
-
-pub fn shares_concept_url() -> String {
-    format!(
-        "https://data.sec.gov/api/xbrl/companyconcept/CIK{MSTR_CIK}/dei/EntityCommonStockSharesOutstanding.json"
-    )
 }
 
 /// Dépôt SEC (entrée de `filings.recent` du fichier `submissions`).
@@ -95,8 +88,6 @@ pub fn parse_submissions(v: &Value) -> Result<Vec<Filing>, String> {
 pub struct SharesFact {
     pub date: NaiveDate,
     pub shares: f64,
-    pub form: String,
-    pub filed: NaiveDate,
 }
 
 /// Division de l'action MSTR par 10 (7 août 2024) : les cours Yahoo sont
@@ -104,51 +95,99 @@ pub struct SharesFact {
 pub const SPLIT_DATE: (i32, u32, u32) = (2024, 8, 7);
 pub const SPLIT_RATIO: f64 = 10.0;
 
-/// Actions en circulation par date, d'après la réponse `companyconcept`.
-/// Les faits d'un même dépôt et d'une même date (une valeur par classe) sont
-/// additionnés ; pour une même date publiée plusieurs fois, le dépôt le plus
-/// récent l'emporte. Les valeurs antérieures à la division sont ×10.
-pub fn parse_shares_concept(v: &Value) -> Result<Vec<SharesFact>, String> {
-    let facts = v["units"]["shares"]
-        .as_array()
-        .ok_or("réponse SEC inattendue : aucune valeur en « shares »")?;
-    let split = NaiveDate::from_ymd_opt(SPLIT_DATE.0, SPLIT_DATE.1, SPLIT_DATE.2).unwrap();
+/// Formulaires dont la page de couverture donne le nombre d'actions.
+pub fn is_periodic_report(form: &str) -> bool {
+    matches!(form, "10-Q" | "10-K" | "10-Q/A" | "10-K/A")
+}
 
-    // (date, dépôt) → somme des classes
-    let mut per_filing: BTreeMap<(NaiveDate, String), SharesFact> = BTreeMap::new();
-    for f in facts {
-        let (Some(end), Some(val), Some(accn), Some(filed)) = (
-            f["end"].as_str().and_then(ymd),
-            f["val"].as_f64(),
-            f["accn"].as_str(),
-            f["filed"].as_str().and_then(ymd),
-        ) else {
+/// Nombre d'actions en circulation de la page de couverture d'un 10-Q/10-K
+/// (HTML avec XBRL intégré) : somme des balises
+/// `dei:EntityCommonStockSharesOutstanding` (une par classe), datée par le
+/// contexte XBRL de la première. À défaut de balises, la phrase de couverture
+/// (« As of July 24, 2026, the registrant had 364,585,501 shares of class A
+/// common stock ... and 19,640,250 shares of class B common stock ») est lue.
+/// Les valeurs antérieures à la division sont ×10.
+pub fn parse_cover_shares(html: &str) -> Option<SharesFact> {
+    let fact = cover_shares_xbrl(html).or_else(|| cover_shares_text(&html_to_text(html)))?;
+    let split = NaiveDate::from_ymd_opt(SPLIT_DATE.0, SPLIT_DATE.1, SPLIT_DATE.2).unwrap();
+    let shares = if fact.date < split {
+        fact.shares * SPLIT_RATIO
+    } else {
+        fact.shares
+    };
+    (shares > 0.0).then_some(SharesFact { shares, ..fact })
+}
+
+fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
+    let start = attrs.find(&format!("{name}=\""))? + name.len() + 2;
+    let len = attrs[start..].find('"')?;
+    Some(&attrs[start..start + len])
+}
+
+fn cover_shares_xbrl(html: &str) -> Option<SharesFact> {
+    static FACT: OnceLock<Regex> = OnceLock::new();
+    static CONTEXT: OnceLock<Regex> = OnceLock::new();
+    static INSTANT: OnceLock<Regex> = OnceLock::new();
+    static TAGS: OnceLock<Regex> = OnceLock::new();
+    let fact = FACT.get_or_init(|| {
+        Regex::new(r"(?is)<ix:nonFraction\b([^>]*)>(.*?)</ix:nonFraction>").unwrap()
+    });
+    let context = CONTEXT.get_or_init(|| {
+        Regex::new(
+            r#"(?is)<(?:xbrli:)?context\b[^>]*\bid="([^"]+)"[^>]*>(.*?)</(?:xbrli:)?context>"#,
+        )
+        .unwrap()
+    });
+    let instant =
+        INSTANT.get_or_init(|| Regex::new(r"<(?:xbrli:)?instant>\s*(\d{4}-\d{2}-\d{2})").unwrap());
+    let tags = TAGS.get_or_init(|| Regex::new(r"(?s)<[^>]*>").unwrap());
+
+    let mut total = 0.0;
+    let mut first_context = None;
+    for c in fact.captures_iter(html) {
+        let attrs = &c[1];
+        if attr(attrs, "name") != Some("dei:EntityCommonStockSharesOutstanding") {
+            continue;
+        }
+        let raw = tags.replace_all(&c[2], "");
+        let Some(value) = parse_count(raw.trim()) else {
             continue;
         };
-        let entry = per_filing
-            .entry((end, accn.to_string()))
-            .or_insert(SharesFact {
-                date: end,
-                shares: 0.0,
-                form: f["form"].as_str().unwrap_or("").to_string(),
-                filed,
-            });
-        entry.shares += val;
+        let scale: i32 = attr(attrs, "scale")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        total += value * 10f64.powi(scale);
+        if first_context.is_none() {
+            first_context = attr(attrs, "contextRef").map(str::to_string);
+        }
     }
+    let context_id = first_context?;
+    let date = context
+        .captures_iter(html)
+        .find(|c| c[1] == context_id)
+        .and_then(|c| ymd(&instant.captures(&c[2])?[1]))?;
+    Some(SharesFact {
+        date,
+        shares: total,
+    })
+}
 
-    let mut by_date: BTreeMap<NaiveDate, SharesFact> = BTreeMap::new();
-    for mut fact in per_filing.into_values() {
-        if fact.date < split {
-            fact.shares *= SPLIT_RATIO;
-        }
-        match by_date.get(&fact.date) {
-            Some(existing) if existing.filed >= fact.filed => {}
-            _ => {
-                by_date.insert(fact.date, fact);
-            }
-        }
-    }
-    Ok(by_date.into_values().filter(|f| f.shares > 0.0).collect())
+fn cover_shares_text(text: &str) -> Option<SharesFact> {
+    static COVER: OnceLock<Regex> = OnceLock::new();
+    static CLASS: OnceLock<Regex> = OnceLock::new();
+    let cover = COVER.get_or_init(|| {
+        Regex::new(r"(?i)as of ([A-Z][a-z]+ \d{1,2}, \d{4}),? (?:the registrant|there) (?:had|were)\b(.{0,400}?)outstanding").unwrap()
+    });
+    let class = CLASS.get_or_init(|| {
+        Regex::new(r"(?i)(\d{1,3}(?:,\d{3})+) shares of (?:the registrant's |its )?class [ab] common stock").unwrap()
+    });
+    let c = cover.captures(text)?;
+    let date = NaiveDate::parse_from_str(&c[1], "%B %d, %Y").ok()?;
+    let shares: f64 = class
+        .captures_iter(&c[2])
+        .filter_map(|m| parse_count(&m[1]))
+        .sum();
+    (shares > 0.0).then_some(SharesFact { date, shares })
 }
 
 /// Texte brut d'une page HTML : balises retirées, entités courantes décodées,
@@ -300,23 +339,50 @@ mod tests {
     }
 
     #[test]
-    fn shares_sum_classes_and_adjust_for_split() {
-        let v = json!({"units": {"shares": [
-            // Avant la division : classes A et B du même dépôt, ×10.
-            {"end": "2021-07-22", "val": 7783443, "accn": "a1", "form": "10-Q", "filed": "2021-07-29"},
-            {"end": "2021-07-22", "val": 1964025, "accn": "a1", "form": "10-Q", "filed": "2021-07-29"},
-            // Après : une seule valeur, puis la même date republiée plus tard (amendement).
-            {"end": "2026-07-24", "val": 384000000, "accn": "b1", "form": "10-Q", "filed": "2026-07-30"},
-            {"end": "2026-07-24", "val": 384225751, "accn": "b2", "form": "10-Q/A", "filed": "2026-08-15"},
-            {"end": "bad", "val": 1, "accn": "c", "filed": "2026-01-01"}
-        ]}});
-        let f = parse_shares_concept(&v).unwrap();
-        assert_eq!(f.len(), 2);
-        assert_eq!(f[0].date, d("2021-07-22"));
-        assert_eq!(f[0].shares, 97_474_680.0);
-        assert_eq!(f[1].shares, 384_225_751.0);
-        assert_eq!(f[1].form, "10-Q/A");
-        assert!(parse_shares_concept(&json!({"units": {}})).is_err());
+    fn cover_shares_from_inline_xbrl() {
+        // Extrait d'une page de couverture 10-Q : contextes dans ix:header, une balise par classe.
+        let html = r#"<html><body><div style="display:none"><ix:header><ix:resources>
+            <xbrli:context id="c-1"><xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0001050446</xbrli:identifier></xbrli:entity>
+            <xbrli:period><xbrli:startDate>2026-01-01</xbrli:startDate><xbrli:endDate>2026-06-30</xbrli:endDate></xbrli:period></xbrli:context>
+            <xbrli:context id="c-5"><xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0001050446</xbrli:identifier>
+            <xbrli:segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">us-gaap:CommonClassAMember</xbrldi:explicitMember></xbrli:segment></xbrli:entity>
+            <xbrli:period><xbrli:instant>2026-07-24</xbrli:instant></xbrli:period></xbrli:context>
+            </ix:resources></ix:header></div>
+            <p>As of July 24, 2026, the registrant had <ix:nonFraction unitRef="shares" contextRef="c-5" decimals="INF" name="dei:EntityCommonStockSharesOutstanding" format="ixt:num-dot-decimal" scale="0" id="f-1">364,585,501</ix:nonFraction>
+            shares of class A common stock and <ix:nonFraction contextRef="c-6" name="dei:EntityCommonStockSharesOutstanding" unitRef="shares" decimals="INF"><span>19,640,250</span></ix:nonFraction>
+            shares of class B common stock outstanding. <ix:nonFraction name="us-gaap:Assets" contextRef="c-1">1,000</ix:nonFraction></p>
+            </body></html>"#;
+        assert_eq!(
+            parse_cover_shares(html),
+            Some(SharesFact {
+                date: d("2026-07-24"),
+                shares: 384_225_751.0
+            })
+        );
+    }
+
+    #[test]
+    fn cover_shares_from_text_before_split() {
+        let html =
+            "<p>As of July 22, 2021, the registrant had 7,783,443 shares of class A common stock, \
+                    $0.001 par value per share, and 1,964,025 shares of class B common stock, \
+                    $0.001 par value per share, outstanding.</p>";
+        assert_eq!(
+            parse_cover_shares(html),
+            Some(SharesFact {
+                date: d("2021-07-22"),
+                shares: 97_474_680.0
+            })
+        );
+        assert_eq!(
+            parse_cover_shares("<p>Item 2.02 Results of Operations</p>"),
+            None
+        );
+        assert!(
+            is_periodic_report("10-Q")
+                && is_periodic_report("10-K/A")
+                && !is_periodic_report("8-K")
+        );
     }
 
     #[test]
