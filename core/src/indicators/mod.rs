@@ -50,6 +50,10 @@ pub const IDS: [&str; 15] = [
 pub enum Level {
     Info,
     Warning,
+    /// Vert : opération réussie (ex. données récupérées).
+    Success,
+    /// Rouge : échec (ex. source injoignable).
+    Error,
 }
 
 #[derive(Debug, Clone, Serialize)]

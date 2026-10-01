@@ -88,8 +88,8 @@ $$
 | Symbole | Grandeur | Unité | Source |
 |---|---|---|---|
 | $P_M(t)$ | cours de clôture de MSTR | USD / action | Yahoo Finance (`MSTR`) |
-| $N(t)$ | actions ordinaires en circulation (classes A + B) | actions | fichier intégré + `config.ini` |
-| $H(t)$ | bitcoins détenus | BTC | fichier intégré + `config.ini` |
+| $N(t)$ | actions ordinaires en circulation (classes A + B) | actions | fichier intégré + SEC + `config.ini` |
+| $H(t)$ | bitcoins détenus | BTC | fichier intégré + SEC + `config.ini` |
 | $P_B(t)$ | cours de clôture du bitcoin | USD / BTC | Yahoo Finance (`BTC-USD`) |
 
 Le résultat est un **nombre sans dimension** : les dollars s'annulent entre numérateur et dénominateur.
@@ -113,7 +113,22 @@ Chaque point est un triplet $(t_k, H_k, N_k)$. $H_k$ ou $N_k$ peut être absent 
 
 **Normalisation du split.** Strategy a divisé son action par 10 le 7 août 2024. Les cours Yahoo ajustés expriment tout l'historique en actions d'après la division. Pour rester cohérent, tous les $N_k$ antérieurs au split ont été multipliés par 10. Le mNAV est **invariant par division d'actions** : un split de facteur $s$ transforme $P_M \to P_M/s$ et $N \to s\,N$, donc $P_M \times N$ ne change pas. Il suffit que les deux grandeurs soient exprimées dans la même base, ce que garantit cette normalisation.
 
-**Compléments utilisateur.** La section `[MSTR]` de `config.ini` ajoute des points ou en remplace. La fusion se fait **par date et champ par champ** : une valeur de `config.ini` remplace celle du fichier à la même date, et un champ non fourni garde la valeur du fichier.
+**Mise à jour automatique depuis la SEC (EDGAR).** À chaque affichage de l'indicateur, l'application complète le fichier avec les publications postérieures, sans clé et sans IA. Le code est dans [`core/src/sec.rs`](core/src/sec.rs).
+- **BTC détenus :** l'application lit la liste des dépôts de Strategy (`data.sec.gov/submissions`), puis le texte de chaque 8-K déposé depuis la dernière date connue (15 au plus). Le nombre est extrait par motifs fixes : la phrase « held an aggregate of approximately N bitcoins », ou, à défaut, la colonne « Aggregate BTC Holdings » du tableau des achats (plus grand nombre de la ligne de données qui ne soit pas un montant en dollars). Les 8-K qui ne parlent pas de bitcoins sont ignorés. Le point prend la date du 8-K.
+- **Actions en circulation :** l'application lit le fait XBRL `dei:EntityCommonStockSharesOutstanding` (page de couverture des 10-Q et 10-K) via l'API `companyconcept`. Les valeurs d'un même dépôt et d'une même date (une par classe) sont additionnées, et celles d'avant le 7 août 2024 multipliées par 10.
+- **Contrôle de cohérence :** aux dates présentes à la fois dans le fichier et à la SEC, les nombres d'actions sont comparés. Si l'écart dépasse 2 % (classe d'actions manquante, par exemple), les valeurs SEC sont ignorées.
+- **Priorité :** à date égale, le fichier intégré l'emporte sur la SEC, et `config.ini` sur les deux. Seules les dates postérieures au fichier apportent donc du nouveau.
+- **Diagnostic :** deux messages s'affichent au-dessus du graphique, un pour les BTC, un pour les actions. En **vert**, la récupération a réussi, avec la dernière valeur, sa date et le contrôle de cohérence. En **rouge**, l'erreur exacte (réseau, code HTTP, réponse illisible, incohérence) ; le fichier intégré est alors utilisé seul.
+- **Cache :** les réponses sont gardées 12 h en mémoire. La SEC demande d'identifier l'application dans chaque requête : si elle répond HTTP 403, ajoutez un contact dans `config.ini` :
+
+```ini
+[SEC]
+user_agent = Votre Nom votre@adresse.fr
+```
+
+Le nombre d'actions n'est publié qu'environ une fois par trimestre : cette mise à jour n'élimine pas le biais décrit au §6, elle évite seulement de devoir saisir les nouvelles publications à la main.
+
+**Compléments utilisateur.** La section `[MSTR]` de `config.ini` ajoute des points ou en remplace. La fusion se fait **par date et champ par champ** : une valeur de `config.ini` remplace celle du fichier et de la SEC à la même date, et un champ non fourni garde la valeur précédente.
 
 #### 3. Construction des séries continues $H(t)$ et $N(t)$
 
@@ -316,7 +331,7 @@ Toutes les données viennent d'API publiques et gratuites, **sans clé ni compte
 | [alternative.me](https://alternative.me/crypto/fear-and-greed-index/) | indice Fear & Greed |
 | [mempool.space](https://mempool.space) | hauteur de bloc (estimation du prochain halving) |
 | [Bitcoin-Dataset](https://github.com/Yrzxiong/Bitcoin-Dataset) (GitHub) | historique du prix BTC 2010-2018 |
-| Strategy / SEC (fichier intégré) | BTC détenus et actions en circulation de Strategy (MSTR), complétables dans `config.ini` |
+| Strategy / [SEC EDGAR](https://www.sec.gov/edgar) | BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré, complété automatiquement par les 8-K, 10-Q et 10-K récents, et par `config.ini` |
 
 ### Limites de BGeometrics
 
@@ -354,7 +369,7 @@ npm run build        # construit le paquet : .deb sous Linux (target/release/bun
 cargo test --workspace   # tests (après un premier `npm run vendor`)
 ```
 
-Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Fear & Greed, le cache disque, le rapport PDF, et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
+Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Fear & Greed / SEC (liste des dépôts, actions XBRL, BTC détenus dans les 8-K), le cache disque, le rapport PDF, et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
 
 ### Publier une version
 
@@ -365,11 +380,12 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
 - `core/` : bibliothèque Rust sans interface.
   - `data.rs` : accès aux données (Yahoo Finance, historique BTC 2010-2018, Fear & Greed, mempool.space, BGeometrics, OKX) avec cache mémoire, et cache disque pour BGeometrics.
   - `bgeometrics.rs`, `okx.rs` : décodage des réponses de ces deux API.
+  - `sec.rs` : SEC EDGAR (liste des dépôts, nombre d'actions XBRL, BTC détenus lus dans les 8-K).
   - `table.rs` : lecture souple des colonnes des données tabulaires.
   - `indicators/` : un module par indicateur, chacun produisant une figure Plotly (JSON).
   - `simulator.rs` : simulateur de levier dynamique (règle « no-loss », liquidation, export CSV).
   - `pdf.rs` : rapport PDF de simulation.
-  - `config.rs` : lecture/écriture de `config.ini` (noms d'endpoint BGeometrics imposés, section `[MSTR]`).
+  - `config.rs` : lecture/écriture de `config.ini` (noms d'endpoint BGeometrics imposés, sections `[MSTR]` et `[SEC]`).
   - `indicators.json` : liste des outils affichés dans la barre latérale.
   - `data/mstr_holdings.json` : BTC détenus et actions en circulation de Strategy (MSTR), avec leurs sources.
 - `src-tauri/` : application de bureau (commandes appelées par l'interface) et configuration des paquets : `tauri.conf.json` commun, `tauri.linux.conf.json` (`.deb`), `tauri.windows.conf.json` (installateur NSIS).

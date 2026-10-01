@@ -24,6 +24,12 @@ const BLOCK_HEIGHT_URL: &str = "https://mempool.space/api/blocks/tip/height";
 // Yahoo refuse les requêtes sans User-Agent de navigateur (HTTP 429).
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
+// La SEC exige un User-Agent identifiant l'application (personnalisable : [SEC] user_agent).
+const SEC_USER_AGENT: &str = concat!(
+    "dashboard-crypto/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/neomars/dashboard_crypto)"
+);
 const HOUR: Duration = Duration::from_secs(3600);
 /// Les métriques BGeometrics sont mises à jour une fois par jour.
 const BGEOMETRICS_DISK_TTL: i64 = 12 * 3600;
@@ -191,6 +197,48 @@ impl DataProvider {
     #[doc(hidden)]
     pub fn seed_okx(&self, kind: &str, pair: &str, rows: Vec<(NaiveDate, Vec<f64>)>) {
         self.seed(format!("okx:{kind}:{}", pair.to_uppercase()), rows);
+    }
+
+    /// Pré-remplit le cache (tests hors ligne) : réponse SEC pour une URL.
+    #[doc(hidden)]
+    pub fn seed_sec(&self, url: &str, body: &str) {
+        self.seed(format!("sec:{url}"), body.to_string());
+    }
+
+    /// Document SEC EDGAR (JSON ou HTML), gardé 12 h en mémoire.
+    pub async fn sec_text(&self, url: &str) -> Result<Arc<String>, String> {
+        self.cached(&format!("sec:{url}"), 12 * HOUR, || async {
+            let custom = self.config.get("SEC", "user_agent");
+            let agent = if custom.is_empty() {
+                SEC_USER_AGENT.to_string()
+            } else {
+                custom
+            };
+            let resp = self
+                .http
+                .get(url)
+                .header(reqwest::header::USER_AGENT, agent)
+                .timeout(Duration::from_secs(20))
+                .send()
+                .await
+                .map_err(|e| format!("erreur réseau ({url}) : {e}"))?;
+            match resp.status().as_u16() {
+                200..=299 => resp
+                    .text()
+                    .await
+                    .map_err(|e| format!("réponse illisible ({url}) : {e}")),
+                403 => Err(format!(
+                    "HTTP 403 ({url}) : la SEC refuse la requête. Elle exige un User-Agent avec un contact : \
+                     ajoutez « user_agent = Votre Nom votre@adresse.fr » dans la section [SEC] de {}.",
+                    self.config.path().display()
+                )),
+                429 => Err(format!(
+                    "HTTP 429 ({url}) : trop de requêtes vers la SEC, réessayez dans quelques minutes."
+                )),
+                code => Err(format!("HTTP {code} ({url})")),
+            }
+        })
+        .await
     }
 
     async fn get_text(&self, url: &str, timeout: Duration) -> Result<String, String> {
