@@ -115,7 +115,7 @@ Chaque point est un triplet $(t_k, H_k, N_k)$. $H_k$ ou $N_k$ peut être absent 
 
 **Mise à jour automatique depuis la SEC (EDGAR).** À chaque affichage de l'indicateur, l'application complète le fichier avec les publications postérieures, sans clé et sans IA. Le code est dans [`core/src/sec.rs`](core/src/sec.rs).
 - **BTC détenus :** l'application lit la liste des dépôts de Strategy (`data.sec.gov/submissions`), puis le texte de chaque 8-K déposé depuis la dernière date connue (15 au plus). Le nombre est extrait par motifs fixes : la phrase « held an aggregate of approximately N bitcoins », ou, à défaut, la colonne « Aggregate BTC Holdings » du tableau des achats (plus grand nombre de la ligne de données qui ne soit pas un montant en dollars). Les 8-K qui ne parlent pas de bitcoins sont ignorés. Le point prend la date du 8-K.
-- **Actions en circulation :** l'application lit le fait XBRL `dei:EntityCommonStockSharesOutstanding` (page de couverture des 10-Q et 10-K) via l'API `companyconcept`. Les valeurs d'un même dépôt et d'une même date (une par classe) sont additionnées, et celles d'avant le 7 août 2024 multipliées par 10.
+- **Actions en circulation :** l'application lit la page de couverture des 10-Q et 10-K déposés depuis la dernière date connue (3 au plus), ainsi que du dernier déjà couvert par le fichier, qui sert de contrôle. Le nombre vient des balises XBRL intégrées `dei:EntityCommonStockSharesOutstanding` (une par classe d'actions, additionnées, datées par leur contexte XBRL), ou à défaut de la phrase « As of …, the registrant had … shares of class A common stock … and … shares of class B common stock ». Les valeurs d'avant le 7 août 2024 sont multipliées par 10. L'API XBRL `companyconcept` de la SEC ne convient pas : elle n'expose pas les valeurs déclarées par classe et répond HTTP 404 pour Strategy.
 - **Contrôle de cohérence :** aux dates présentes à la fois dans le fichier et à la SEC, les nombres d'actions sont comparés. Si l'écart dépasse 2 % (classe d'actions manquante, par exemple), les valeurs SEC sont ignorées.
 - **Priorité :** à date égale, le fichier intégré l'emporte sur la SEC, et `config.ini` sur les deux. Seules les dates postérieures au fichier apportent donc du nouveau.
 - **Diagnostic :** deux messages s'affichent au-dessus du graphique, un pour les BTC, un pour les actions. En **vert**, la récupération a réussi, avec la dernière valeur, sa date et le contrôle de cohérence. En **rouge**, l'erreur exacte (réseau, code HTTP, réponse illisible, incohérence) ; le fichier intégré est alors utilisé seul.
@@ -370,7 +370,7 @@ npm run build        # construit le paquet : .deb sous Linux (target/release/bun
 cargo test --workspace   # tests (après un premier `npm run vendor`)
 ```
 
-Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Fear & Greed / SEC (liste des dépôts, actions XBRL, BTC détenus dans les 8-K), le cache disque, le rapport PDF, et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
+Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Fear & Greed / SEC (liste des dépôts, nombre d'actions en page de couverture, BTC détenus dans les 8-K), le cache disque, le rapport PDF, et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
 
 ### Publier une version
 
@@ -381,7 +381,7 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
 - `core/` : bibliothèque Rust sans interface.
   - `data.rs` : accès aux données (Yahoo Finance, historique BTC 2010-2018, Fear & Greed, mempool.space, BGeometrics, OKX) avec cache mémoire, et cache disque pour BGeometrics.
   - `bgeometrics.rs`, `okx.rs` : décodage des réponses de ces deux API.
-  - `sec.rs` : SEC EDGAR (liste des dépôts, nombre d'actions XBRL, BTC détenus lus dans les 8-K).
+  - `sec.rs` : SEC EDGAR (liste des dépôts, nombre d'actions lu en page de couverture des 10-Q/10-K, BTC détenus lus dans les 8-K).
   - `table.rs` : lecture souple des colonnes des données tabulaires.
   - `indicators/` : un module par indicateur, chacun produisant une figure Plotly (JSON).
   - `simulator.rs` : simulateur de levier dynamique (règle « no-loss », liquidation, export CSV).
