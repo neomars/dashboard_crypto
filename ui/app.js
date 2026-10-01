@@ -29,7 +29,7 @@ const SOURCES = [
   ["alternative.me", "https://alternative.me/crypto/fear-and-greed-index/", "indice Fear & Greed"],
   ["mempool.space", "https://mempool.space", "hauteur de bloc (estimation du prochain halving)"],
   ["Bitcoin-Dataset (GitHub)", "https://github.com/Yrzxiong/Bitcoin-Dataset", "historique du prix BTC 2010-2018"],
-  ["Strategy / SEC", "https://www.strategy.com/purchases", "BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré à l'application, complétable dans config.ini"],
+  ["Strategy / SEC EDGAR", "https://www.sec.gov/edgar/browse/?CIK=1050446", "BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré, complété à chaque affichage par les dernières publications SEC (contact requis, voir plus bas) et par config.ini"],
 ];
 
 const state = {
@@ -186,6 +186,18 @@ async function renderSettings(box) {
     return el("tr", {}, el("td", {}, m.label), el("td", {}, input), el("td", {}, save));
   });
 
+  const secStatus = el("div");
+  const secInput = el("input", { type: "text", value: settings.sec_user_agent, size: 40, spellcheck: "false",
+    placeholder: "Jean Dupont jean.dupont@exemple.fr" });
+  const secSave = el("button", { class: "btn", type: "button", onclick: async () => {
+    try {
+      await invoke("save_sec_user_agent", { value: secInput.value });
+      secStatus.replaceChildren(notice("success", secInput.value.trim()
+        ? "Contact SEC enregistré : il sera utilisé au prochain affichage de MSTR mNAV."
+        : "Contact SEC retiré : User-Agent par défaut."));
+    } catch (e) { secStatus.replaceChildren(notice("error", String(e))); }
+  } }, "Enregistrer");
+
   box.replaceChildren(
     el("h3", {}, "Sources de données"),
     el("p", {}, "Toutes les données viennent d'API publiques et gratuites, sans clé ni compte :"),
@@ -202,6 +214,10 @@ async function renderSettings(box) {
     el("p", { class: "muted" }, "Pour ajouter les achats annoncés depuis (", link("strategy.com/purchases", "https://www.strategy.com/purchases"),
       "), ajoutez des lignes « AAAA-MM-JJ = BTC détenus » ou « AAAA-MM-JJ = BTC détenus, actions en circulation » dans la section ",
       el("code", {}, "[MSTR]"), " du fichier de configuration ci-dessous. Les seuils de couleur se règlent avec ", el("code", {}, "seuils = 1.0, 1.5, 2.5"), "."),
+    el("h3", {}, "Contact SEC"),
+    el("p", { class: "muted" }, "L'indicateur MSTR mNAV lit les dernières publications de Strategy à la SEC (EDGAR). La SEC exige que chaque requête indique un nom et une adresse e-mail de contact ; sans cela, elle répond « HTTP 403 ». Ces informations ne sont envoyées qu'à la SEC."),
+    el("div", { class: "row" }, secInput, secSave),
+    secStatus,
     el("p", { class: "muted" }, "Fichier de configuration : ", el("code", {}, settings.config_path)),
   );
 }

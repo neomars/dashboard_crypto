@@ -81,6 +81,21 @@ impl Config {
             .map_err(|e| format!("Impossible d'écrire {} : {e}", self.path.display()))
     }
 
+    /// Contact envoyé à la SEC dans le User-Agent (vide = valeur par défaut).
+    pub fn sec_user_agent(&self) -> String {
+        self.get("SEC", "user_agent")
+    }
+
+    /// Enregistre (ou, si vide, retire) le contact SEC.
+    pub fn set_sec_user_agent(&self, value: &str) -> Result<(), String> {
+        let value = value.trim();
+        if value.is_empty() {
+            self.delete("SEC", "user_agent")
+        } else {
+            self.set("SEC", "user_agent", value)
+        }
+    }
+
     /// Nom d'endpoint BGeometrics imposé pour une métrique : variable
     /// `BGEOMETRICS_<CLÉ>` > section `[BGEOMETRICS]` > vide (détection automatique).
     pub fn bgeometrics_endpoint(&self, key: &str) -> String {
@@ -146,6 +161,17 @@ mod tests {
         assert!(!std::fs::read_to_string(cfg.path())
             .unwrap()
             .contains("BGEOMETRICS"));
+    }
+
+    #[test]
+    fn sec_user_agent_roundtrip() {
+        let cfg = temp_config("sec");
+        assert_eq!(cfg.sec_user_agent(), "");
+        cfg.set_sec_user_agent(" Jean Dupont jean@exemple.fr ")
+            .unwrap();
+        assert_eq!(cfg.sec_user_agent(), "Jean Dupont jean@exemple.fr");
+        cfg.set_sec_user_agent("").unwrap();
+        assert_eq!(cfg.sec_user_agent(), "");
     }
 
     #[test]

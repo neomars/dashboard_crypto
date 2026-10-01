@@ -438,7 +438,7 @@ async fn sec_shares(data: &DataProvider, known: &[HoldingsPoint], out: &mut SecU
             return;
         }
         Err(e) => {
-            out.notices.push((Level::Error, format!("SEC, nombre d'actions : échec de la récupération, {e}. Fichier intégré utilisé.")));
+            out.notices.push((Level::Error, format!("SEC, nombre d'actions : échec de la récupération, {}. Fichier intégré utilisé.", e.trim_end_matches('.'))));
             return;
         }
     };
@@ -511,7 +511,13 @@ async fn sec_btc(data: &DataProvider, known: &[HoldingsPoint], out: &mut SecUpda
     }) {
         Ok(f) => f,
         Err(e) => {
-            out.notices.push((Level::Error, format!("SEC, BTC détenus : échec de la liste des dépôts, {e}. Fichier intégré utilisé.")));
+            out.notices.push((
+                Level::Error,
+                format!(
+                    "SEC, BTC détenus : échec de la liste des dépôts, {}. Fichier intégré utilisé.",
+                    e.trim_end_matches('.')
+                ),
+            ));
             return;
         }
     };

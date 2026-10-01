@@ -143,6 +143,8 @@ struct Settings {
     endpoints: Vec<EndpointSetting>,
     /// Dernière donnée de holdings MSTR retenue (fichier intégré + config.ini).
     mstr: Option<MstrHoldingsSetting>,
+    /// Contact envoyé à la SEC (vide = User-Agent par défaut).
+    sec_user_agent: String,
 }
 
 #[tauri::command]
@@ -164,7 +166,26 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
             btc: h.btc,
             shares: h.shares,
         }),
+        sec_user_agent: cfg.sec_user_agent(),
     }
+}
+
+/// Enregistre (ou, si vide, retire) le contact envoyé à la SEC.
+#[tauri::command]
+fn save_sec_user_agent(state: State<'_, AppState>, value: String) -> Result<(), String> {
+    let value = value.trim();
+    if !value.is_empty() && !value.contains('@') {
+        return Err(
+            "La SEC demande un nom et une adresse e-mail (ex. Jean Dupont jean.dupont@exemple.fr)."
+                .into(),
+        );
+    }
+    if value.chars().any(char::is_control) {
+        return Err("Le contact ne doit pas contenir de retour à la ligne.".into());
+    }
+    state.data.config().set_sec_user_agent(value)?;
+    state.data.clear_cache();
+    Ok(())
 }
 
 /// Impose (ou, si vide, retire) le nom d'endpoint BGeometrics d'une métrique.
@@ -203,6 +224,7 @@ fn main() {
             export_simulation,
             get_settings,
             save_endpoint,
+            save_sec_user_agent,
             clear_cache
         ])
         .run(tauri::generate_context!())
