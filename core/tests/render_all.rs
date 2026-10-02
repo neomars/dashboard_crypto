@@ -104,6 +104,8 @@ fn provider() -> DataProvider {
     data.seed_ticker_history("BTC-USD", candles("2014-09-17", 0.05));
     data.seed_ticker_history("ETH-USD", candles("2017-11-09", 0.004));
     data.seed_ticker_history("MSTR", mstr_candles(&candles("2014-09-17", 0.05)));
+    // PMI ISM hors ligne : flux identique au fichier intégré.
+    data.seed_ism_feed("date,PMI\n2026-08-31,54.6\n");
     // SEC hors ligne : aucun nouveau 8-K, dernier 10-Q identique au fichier intégré.
     let q2 = dashboard_core::sec::Filing {
         accession: "0001-26-000005".into(),

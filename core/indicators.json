@@ -122,5 +122,13 @@
         "description": "Cours de Strategy (MSTR) coloré selon son mNAV : capitalisation boursière rapportée à la valeur des bitcoins détenus.",
         "default_scale": "logarithmique",
         "interpretation": "Vert : l'action vaut moins que ses bitcoins (mNAV < 1, sous-cotée). Jaune : prime modérée. Orange puis rouge : forte prime payée au-dessus des bitcoins détenus. Seuils modifiables dans config.ini, section [MSTR]."
+    },
+    {
+        "id": "pmi_btc",
+        "name": "Business Cycle vs Bitcoin",
+        "icon": "🏭",
+        "description": "Momentum du Bitcoin (écart à sa moyenne 24 mois) comparé au cycle économique américain (ISM Manufacturing PMI centré sur 50).",
+        "default_scale": "linear",
+        "interpretation": "Jaune/orange : momentum BTC au-dessus/en dessous de sa tendance. Vert-bleu/rouge : PMI au-dessus/en dessous de 50 (expansion/contraction). Fond vert-bleu : le BTC remonte alors que l'industrie est encore en contraction (le BTC anticipe la reprise). Fond rouge sombre : le BTC faiblit alors que l'industrie est en expansion (alerte de retournement)."
     }
 ]

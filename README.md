@@ -24,6 +24,7 @@ L'application propose une barre de navigation latérale pour choisir parmi les o
 14. **Realized Cap HODL Waves** : Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge, de moins d'un jour à plus de 10 ans), via BGeometrics.
 15. **Net Realized Profit / Loss** : Profit ou perte nets réalisés chaque semaine sur la blockchain, affichés en bulles sur le prix du Bitcoin (vert = profit net, rouge = perte nette, taille proportionnelle au montant), à la manière du graphique Glassnode « Profit Taking ». Permet de voir si une hausse s'accompagne d'une forte prise de profit ou non. Données : NRPL journalier de BGeometrics, cumulé par semaine.
 16. **MSTR mNAV** : Cours de Strategy (MSTR), coloré du vert au rouge selon son mNAV (capitalisation boursière rapportée à la valeur des bitcoins détenus), avec la courbe du mNAV et ses zones en dessous. Montre d'un coup d'œil si l'action est sous-cotée ou sur-cotée par rapport à ses bitcoins (voir [Calcul du MSTR mNAV](#calcul-du-mstr-mnav)).
+17. **Business Cycle vs Bitcoin** : Momentum du Bitcoin (écart à sa moyenne mobile 24 mois) comparé au cycle économique américain (ISM Manufacturing PMI centré sur 50), avec les périodes de divergence en fond. Reprend l'indicateur TradingView « deKoder | Business Cycle vs Bitcoin » (dK=PMIvsBTC) (voir [Calcul du Business Cycle vs Bitcoin](#calcul-du-business-cycle-vs-bitcoin)).
 
 ### Calcul du Bitcoin Cycle Correction Analysis
 
@@ -278,6 +279,33 @@ Le titre et les métriques indiquent :
 seuils = 1.0, 1.5, 2.5
 ```
 
+### Calcul du Business Cycle vs Bitcoin
+
+Code : [`core/src/indicators/pmi_btc.rs`](core/src/indicators/pmi_btc.rs). Les calculs reprennent ceux de l'indicateur TradingView open source « deKoder | Business Cycle vs Bitcoin », réglages par défaut (24, 3, 0,15), sur des données **mensuelles** :
+
+$$
+\text{Momentum BTC}(m) = \left( \frac{C(m)}{\text{SMA}_{24}(C)(m)} \times 100 - 100 \right) \times 0{,}15
+\qquad
+\text{Vague PMI}(m) = (\text{PMI}(m) - 50) \times 3
+$$
+
+- $C(m)$ est la dernière clôture BTC du mois $m$ (le mois en cours compte avec la dernière clôture connue, comme une bougie mensuelle) et $\text{SMA}_{24}$ sa moyenne sur 24 mois, réglable de 6 à 60 mois dans l'interface.
+- Le PMI est centré sur 50, la frontière entre expansion et contraction de l'industrie américaine. Le facteur 3 le met à l'échelle du momentum BTC. Exemple : PMI d'août 2026 = 54,6, soit une vague de $(54{,}6 - 50) \times 3 = 13{,}8$.
+- Couleurs : momentum BTC jaune au-dessus de 0, orange en dessous ; PMI vert-bleu au-dessus de 0, rouge en dessous.
+- **Fonds de divergence** : vert-bleu quand le momentum BTC est positif alors que le PMI est négatif (le BTC anticipe une reprise) ; rouge sombre quand le momentum BTC est négatif alors que le PMI est positif (le BTC alerte d'un retournement).
+
+**Données du PMI.** L'ISM ne publie pas d'API gratuite, et la série ISM de FRED a été retirée. L'application combine trois sources, la suivante remplaçant la précédente pour un même mois :
+1. un fichier intégré, [`core/data/ism_pmi.csv`](core/data/ism_pmi.csv), de janvier 2013 à août 2026 ;
+2. un CSV public mis à jour chaque mois ([sofiaverma06/ism-feed](https://github.com/sofiaverma06/ism-feed)), lu à chaque affichage et gardé 12 h en mémoire ;
+3. la section `[PMI]` de `config.ini`, pour ajouter ou corriger un mois sans recompiler.
+
+Le CSV en ligne est contrôlé : les valeurs hors de la plage 25-80 sont rejetées, et s'il diffère du fichier intégré de plus de 1,5 point sur un mois commun, il est ignoré. Un message **vert** (dernier PMI, nombre de nouveaux mois, écart maximal constaté) ou **rouge** (erreur exacte, fichier intégré utilisé) s'affiche au-dessus du graphique. Un avertissement s'affiche aussi si le dernier PMI connu a plus d'un mois de retard sur sa date de publication (1er jour ouvré du mois suivant).
+
+```ini
+[PMI]
+2026-09 = 49.1
+```
+
 ## Installation
 
 Les fichiers d'installation sont publiés dans les [Releases](https://github.com/neomars/dashboard_crypto/releases) du dépôt :
@@ -332,6 +360,7 @@ Toutes les données viennent d'API publiques et gratuites, **sans clé ni compte
 | [alternative.me](https://alternative.me/crypto/fear-and-greed-index/) | indice Fear & Greed |
 | [mempool.space](https://mempool.space) | hauteur de bloc (estimation du prochain halving) |
 | [Bitcoin-Dataset](https://github.com/Yrzxiong/Bitcoin-Dataset) (GitHub) | historique du prix BTC 2010-2018 |
+| [ism-feed](https://github.com/sofiaverma06/ism-feed) (GitHub) | ISM Manufacturing PMI mensuel : fichier intégré depuis 2013, complété par ce CSV public et par `config.ini` |
 | Strategy / [SEC EDGAR](https://www.sec.gov/edgar) | BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré, complété automatiquement par les 8-K, 10-Q et 10-K récents, et par `config.ini` |
 
 ### Limites de BGeometrics
@@ -386,9 +415,10 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
   - `indicators/` : un module par indicateur, chacun produisant une figure Plotly (JSON).
   - `simulator.rs` : simulateur de levier dynamique (règle « no-loss », liquidation, export CSV).
   - `pdf.rs` : rapport PDF de simulation.
-  - `config.rs` : lecture/écriture de `config.ini` (noms d'endpoint BGeometrics imposés, sections `[MSTR]` et `[SEC]`).
+  - `config.rs` : lecture/écriture de `config.ini` (noms d'endpoint BGeometrics imposés, sections `[MSTR]`, `[SEC]` et `[PMI]`).
   - `indicators.json` : liste des outils affichés dans la barre latérale.
   - `data/mstr_holdings.json` : BTC détenus et actions en circulation de Strategy (MSTR), avec leurs sources.
+  - `data/ism_pmi.csv` : ISM Manufacturing PMI mensuel depuis janvier 2013.
 - `src-tauri/` : application de bureau (commandes appelées par l'interface) et configuration des paquets : `tauri.conf.json` commun, `tauri.linux.conf.json` (`.deb`), `tauri.windows.conf.json` (installateur NSIS).
 - `ui/` : interface (HTML/CSS/JavaScript, sans étape de compilation).
 - `scripts/` : copie de Plotly.js dans `ui/vendor/`, changement de version.
