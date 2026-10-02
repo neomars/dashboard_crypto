@@ -17,6 +17,7 @@ mod long_short;
 pub mod mstr_mnav;
 mod net_realized_pnl;
 mod onchain;
+pub mod pmi_btc;
 mod realized_cap_utxo;
 mod sopr;
 mod vcr;
@@ -27,7 +28,7 @@ pub use bmsb::{calculate_bmsb, Regime};
 pub use net_realized_pnl::{bubble_sizes, weekly_net_realized, WeeklyPnl};
 pub use vcr::annualized_vol;
 
-pub const IDS: [&str; 15] = [
+pub const IDS: [&str; 16] = [
     "fear_greed",
     "halving",
     "onchain",
@@ -43,6 +44,7 @@ pub const IDS: [&str; 15] = [
     "realized_cap_utxo",
     "net_realized_pnl",
     "mstr_mnav",
+    "pmi_btc",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -133,6 +135,7 @@ pub async fn render(
         "realized_cap_utxo" => realized_cap_utxo::render(data).await,
         "net_realized_pnl" => net_realized_pnl::render(data).await,
         "mstr_mnav" => mstr_mnav::render(data, params).await,
+        "pmi_btc" => pmi_btc::render(data, params).await,
         other => Err(format!("Indicateur inconnu : {other}")),
     }
 }

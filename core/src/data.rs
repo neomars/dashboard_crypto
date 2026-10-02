@@ -30,6 +30,9 @@ const SEC_USER_AGENT: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (+https://github.com/neomars/dashboard_crypto)"
 );
+/// Historique mensuel de l'ISM Manufacturing PMI (CSV mis à jour chaque mois sur GitHub).
+pub const ISM_FEED_URL: &str =
+    "https://raw.githubusercontent.com/sofiaverma06/ism-feed/main/ism_history.csv";
 const HOUR: Duration = Duration::from_secs(3600);
 /// Les métriques BGeometrics sont mises à jour une fois par jour.
 const BGEOMETRICS_DISK_TTL: i64 = 12 * 3600;
@@ -197,6 +200,20 @@ impl DataProvider {
     #[doc(hidden)]
     pub fn seed_okx(&self, kind: &str, pair: &str, rows: Vec<(NaiveDate, Vec<f64>)>) {
         self.seed(format!("okx:{kind}:{}", pair.to_uppercase()), rows);
+    }
+
+    /// Pré-remplit le cache (tests hors ligne) : CSV de l'ISM PMI.
+    #[doc(hidden)]
+    pub fn seed_ism_feed(&self, csv: &str) {
+        self.seed("ism_feed".into(), csv.to_string());
+    }
+
+    /// CSV de l'historique mensuel de l'ISM Manufacturing PMI, gardé 12 h en mémoire.
+    pub async fn ism_feed(&self) -> Result<Arc<String>, String> {
+        self.cached("ism_feed", 12 * HOUR, || async {
+            self.get_text(ISM_FEED_URL, Duration::from_secs(20)).await
+        })
+        .await
     }
 
     /// Pré-remplit le cache (tests hors ligne) : réponse SEC pour une URL.

@@ -29,6 +29,7 @@ const SOURCES = [
   ["alternative.me", "https://alternative.me/crypto/fear-and-greed-index/", "indice Fear & Greed"],
   ["mempool.space", "https://mempool.space", "hauteur de bloc (estimation du prochain halving)"],
   ["Bitcoin-Dataset (GitHub)", "https://github.com/Yrzxiong/Bitcoin-Dataset", "historique du prix BTC 2010-2018"],
+  ["ISM PMI (ism-feed, GitHub)", "https://github.com/sofiaverma06/ism-feed", "ISM Manufacturing PMI mensuel : fichier intégré (2013 →), complété par ce CSV public et par config.ini (section [PMI])"],
   ["Strategy / SEC EDGAR", "https://www.sec.gov/edgar/browse/?CIK=1050446", "BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré, complété à chaque affichage par les dernières publications SEC (contact requis, voir plus bas) et par config.ini"],
 ];
 
@@ -40,6 +41,7 @@ const state = {
     bmsb: { sma: 20, ema: 21 },
     long_short: { pair: "BTC", mode: "Long vs Short" },
     mstr_mnav: { btc: true },
+    pmi_btc: { sma: 24 },
   },
   sim: null,
   requestId: 0,
@@ -253,6 +255,13 @@ function indicatorControls(ind, refresh) {
         onchange: () => { params.mode = m; refresh(); } }), " ", m)));
     return el("div", { class: "controls" }, el("label", { class: "field" }, el("span", {}, "Paire"), pair),
       el("div", { class: "field" }, el("span", {}, "Mode d'affichage"), modes));
+  }
+  if (ind.id === "pmi_btc") {
+    const out = el("output", {}, params.sma);
+    const input = el("input", { type: "range", min: 6, max: 60, step: 1, value: params.sma,
+      oninput: (e) => { out.textContent = e.target.value; },
+      onchange: (e) => { params.sma = Number(e.target.value); refresh(); } });
+    return el("div", { class: "controls" }, el("label", { class: "field" }, el("span", {}, "Moyenne de tendance BTC (mois) : ", out), input));
   }
   if (ind.id === "mstr_mnav") {
     const toggle = el("input", { type: "checkbox", checked: params.btc,
