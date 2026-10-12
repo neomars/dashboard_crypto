@@ -1,12 +1,23 @@
 # Dashboard d'Indicateurs Crypto et Financiers
 
-Application de bureau (Linux Debian / Ubuntu et Windows) permettant de visualiser divers indicateurs du marché Bitcoin et des marchés financiers.
+Application de bureau (Linux Debian / Ubuntu et Windows) permettant de visualiser divers indicateurs du marché Bitcoin et des marchés financiers, ainsi que les signaux et le backtest d'un moteur de trading.
 
-Écrite en **Rust** avec [Tauri](https://tauri.app) : le cœur (`core/`) récupère les données et calcule les indicateurs, l'interface (`ui/`) les affiche avec Plotly.js dans une fenêtre native. La version 1.x était une application Python/Streamlit ; elle reste disponible dans l'historique git.
+Écrite en **Rust** avec [Tauri](https://tauri.app) : le cœur (`core/`) récupère les données et calcule les indicateurs de marché, le moteur de trading (`trading/`) calcule ses signaux et ses backtests, l'interface (`ui/`) affiche les deux avec Plotly.js dans une fenêtre native. La version 1.x était une application Python/Streamlit ; elle reste disponible dans l'historique git.
 
 ## Fonctionnalités
 
-L'application propose une barre de navigation latérale pour choisir parmi les outils suivants :
+La barre de navigation latérale est divisée en trois sections : **Trading**, **Simulation** et **Indicateurs de marché**.
+
+### Trading (moteur séparé)
+
+Le moteur de trading ([`trading/`](trading/)) est séparé des indicateurs de marché : il ne dépend pas de `core/`, ne lit pas leurs données et ne s'en sert pas pour décider. Il a ses propres données (bougies et funding de Poloniex, la plateforme d'exécution prévue), ses propres indicateurs de signal et ses propres règles de risque ; le tableau de bord ne fait qu'afficher ses résultats. Il ne passe encore aucun ordre réel (voir [Moteur de trading](#moteur-de-trading)).
+
+- **Signaux de tendance** : score de tendance (−1 à +1) et exposition cible que le moteur viserait à la dernière clôture, pour BTC, ETH, SOL et 8 autres cryptos, en spot ou en perpétuel USDT, sur bougies journalières ou de 4 heures.
+- **Backtest tendance** : rejoue le module tendance sur l'historique Poloniex, avec exécution à l'ouverture suivante, frais, glissement, funding, stop suiveur et coupe-circuits ; courbe de capital comparée au Buy & Hold, drawdown, exposition, journal des ordres et des événements de risque, export CSV.
+
+### Simulation et indicateurs de marché
+
+Outils d'analyse : ils ne déclenchent aucun ordre et n'alimentent pas le moteur de trading.
 
 1.  **Indice Fear & Greed** : Visualisation du sentiment de marché corrélé au prix du Bitcoin.
 2.  **Bitcoin Halving** : Analyse des cycles de halving avec identification des sommets et des creux de cycle.
@@ -306,6 +317,75 @@ Le CSV en ligne est contrôlé : les valeurs hors de la plage 25-80 sont rejeté
 2026-09 = 49.1
 ```
 
+## Moteur de trading
+
+Code : [`trading/`](trading/) (crate `trading-engine`). Il ne dépend pas de `core/` : indicateurs de marché et moteur de trading ne partagent ni données ni calculs. L'application ([`src-tauri/src/trading.rs`](src-tauri/src/trading.rs)) appelle le moteur et affiche ses résultats dans la section **Trading**.
+
+### Données
+
+API publique de Poloniex, sans clé ni compte ([`trading/src/poloniex.rs`](trading/src/poloniex.rs)) :
+
+| Données | Endpoint | Limites |
+|---|---|---|
+| Bougies spot | `GET /markets/{symbole}/candles` (ex. `BTC_USDT`) | 500 bougies par requête ; historique BTC vérifié depuis janvier 2017 |
+| Bougies du perpétuel | `GET /v3/market/candles` (ex. `BTC_USDT_PERP`) | 500 bougies par requête ; historique vérifié depuis janvier 2023 |
+| Funding du perpétuel | `GET /v3/market/fundingRate/history` | un taux toutes les 8 h, 100 par requête, **180 derniers jours seulement** |
+
+Les bougies sont chargées par fenêtres de 500, de la plus récente à la plus ancienne, et gardées 15 min en mémoire. La bougie en cours, pas encore close, est écartée : un signal n'est jamais calculé sur un cours provisoire.
+
+### Module tendance
+
+À la clôture de chaque bougie, le moteur calcule un score $S \in [-1, 1]$ à partir de cette clôture et des bougies précédentes uniquement.
+
+**Variante Donchian (par défaut).** Pour chaque période $L \in \lbrace 20, 55, 100, 200 \rbrace$, un signal $s_L$ vaut :
+- $+1$ dès que la clôture dépasse le plus haut des $L$ bougies précédentes, et le reste tant que la clôture tient au-dessus du plus bas des $L/2$ bougies précédentes ;
+- $-1$ dans le cas symétrique, sur le perpétuel seulement (pas de vente à découvert en spot) ;
+- $0$ sinon.
+
+$$
+S = \frac{1}{4} \sum_{L} s_L
+$$
+
+**Variante EMA.** $S = +1$ si l'EMA 20 dépasse l'EMA 100 et la clôture la SMA 200 ; $S = -1$ dans le cas inverse (perpétuel seulement) ; $S = 0$ sinon. Les EMA sont amorcées par la moyenne simple de leurs $n$ premières valeurs.
+
+### Taille de position et risque
+
+Exposition cible, en fraction du capital (négative pour une vente) :
+
+$$
+E = \text{clip}\left(S \times \frac{\sigma^{\ast}}{\hat\sigma_{30}},\ -L_{\max},\ L_{\max}\right)
+$$
+
+où $\sigma^{\ast}$ est la volatilité visée (25 % par an par défaut), $\hat\sigma_{30}$ la volatilité réalisée des rendements logarithmiques sur 30 jours (écart-type annualisé sur 365 jours), et $L_{\max}$ le levier maximal : 1 en spot, 2 par défaut en perpétuel, 5 au plus.
+
+- **Rééquilibrage par seuil** : la position n'est ajustée que si elle s'ouvre, se ferme, change de sens, dépasse le levier maximal, ou si l'exposition varie de plus de 20 % en relatif. Les petits ajustements coûteraient plus en frais qu'ils ne rapportent.
+- **Stop suiveur** : à $3 \times \text{ATR}_{20}$ (lissage de Wilder) du meilleur cours atteint depuis l'entrée ; il ne recule jamais. Après un stop, pas de nouvelle entrée dans le même sens avant une clôture au-delà du meilleur cours d'avant le stop (la tendance reprend) ou un retour du score à 0.
+- **Coupe-circuits** : perte de 3 % sur une journée UTC, ou baisse de 10 % depuis le plus haut du capital. En backtest, ils sont signalés ; l'option « Arrêter au premier coupe-circuit » solde la position et arrête tout, comme le fera le moteur en réel (reprise manuelle).
+- **Liquidation** (perpétuel) : si, au pire cours de la bougie, le capital tombe sous 0,5 % de la valeur de la position, celle-ci est liquidée et le backtest s'arrête.
+
+### Backtest
+
+Chronologie d'une bougie (aucune décision n'utilise une donnée postérieure à la clôture qui la déclenche) :
+1. **ouverture** : un stop franchi par l'écart d'ouverture est exécuté au cours d'ouverture, puis l'ordre décidé à la clôture précédente est exécuté au cours d'ouverture ;
+2. **pendant la bougie** : funding, stop touché par le plus bas (ou le plus haut pour une vente), contrôle de liquidation ;
+3. **clôture** : valorisation, coupe-circuits, mise à jour du stop, signal et ordre pour l'ouverture suivante.
+
+Coûts :
+- **frais** : taux taker sur le montant de chaque ordre, 0,075 % par défaut (le taux le plus élevé relevé pour Poloniex) ;
+- **glissement** : cours d'exécution dégradé de 0,05 % par défaut ;
+- **funding** (perpétuel) : à chaque paiement de 8 h, la position paie $q \times P \times f$, avec $q$ la quantité signée, $P$ le milieu ouverture-clôture et $f$ le taux. Une position acheteuse paie un taux positif, une position vendeuse le reçoit. Le taux réel est utilisé sur les 180 derniers jours, un taux supposé au-delà (0,01 % par 8 h par défaut) ; le nombre de paiements réels et supposés est affiché ;
+- **spot** : pas d'emprunt, chaque achat tient dans la trésorerie, frais compris.
+
+Le Buy & Hold de comparaison achète l'actif au premier cours d'ouverture, frais et glissement compris, et le garde.
+
+Mesures, sur 365 jours de cotation par an : rendement annualisé composé, volatilité, Sharpe (taux sans risque nul), Sortino, drawdown maximal, Calmar, temps investi, levier moyen, rotation annuelle, nombre d'allers-retours et part gagnante.
+
+### Limites
+
+- Un backtest favorable n'est pas une preuve. Les paramètres par défaut sont choisis a priori, d'après la littérature sur le suivi de tendance, et non optimisés sur ces données ; validez-les sur une période non utilisée, puis en paper trading.
+- L'exécution réelle des ordres n'est pas encore écrite. Elle réutilisera les mêmes signaux et règles de risque, avec une clé API Poloniex limitée au trading (sans droit de retrait). Vérifiez d'abord que Poloniex peut vous servir dans votre pays (règlement européen MiCA).
+- Le funding de plus de 180 jours est supposé, et le perpétuel n'a pas d'historique vérifié avant 2023.
+
 ## Installation
 
 Les fichiers d'installation sont publiés dans les [Releases](https://github.com/neomars/dashboard_crypto/releases) du dépôt :
@@ -362,6 +442,7 @@ Toutes les données viennent d'API publiques et gratuites, **sans clé ni compte
 | [Bitcoin-Dataset](https://github.com/Yrzxiong/Bitcoin-Dataset) (GitHub) | historique du prix BTC 2010-2018 |
 | [ism-feed](https://github.com/sofiaverma06/ism-feed) (GitHub) | ISM Manufacturing PMI mensuel : fichier intégré depuis 2013, complété par ce CSV public et par `config.ini` |
 | Strategy / [SEC EDGAR](https://www.sec.gov/edgar) | BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré, complété automatiquement par les 8-K, 10-Q et 10-K récents, et par `config.ini` |
+| [Poloniex](https://api-docs.poloniex.com) | section Trading uniquement : bougies spot et perpétuel, historique du funding (180 derniers jours) |
 
 ### Limites de BGeometrics
 
@@ -401,6 +482,8 @@ cargo test --workspace   # tests (après un premier `npm run vendor`)
 
 Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Fear & Greed / SEC (liste des dépôts, nombre d'actions en page de couverture, BTC détenus dans les 8-K), le cache disque, le rapport PDF, et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
 
+Ceux du moteur de trading couvrent ses indicateurs (EMA, ATR, canaux, volatilité), les signaux de cassure, les règles de risque, le backtest (exécution à l'ouverture suivante, frais, spot sans emprunt, stop et reprise, funding réel ou supposé, coupe-circuits), les mesures de performance et le décodage des réponses Poloniex. `trading/tests/render_trading.rs` rejoue les deux pages Trading sur un marché synthétique, sans réseau ; avec `TRADING_SAMPLES_HTML=/tmp/trading.html`, il écrit aussi une page affichant leurs figures.
+
 ### Publier une version
 
 Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/set-version.mjs`), lance les tests (sous Linux et sous Windows), construit le `.deb` et les deux `.exe`, vérifie que chacun s'installe et démarre, puis les publie dans une Release. Il tourne aussi sur chaque pull request, dont les paquets sont téléchargeables dans les artefacts du workflow, et peut être lancé manuellement depuis l'onglet Actions.
@@ -419,6 +502,14 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
   - `indicators.json` : liste des outils affichés dans la barre latérale.
   - `data/mstr_holdings.json` : BTC détenus et actions en circulation de Strategy (MSTR), avec leurs sources.
   - `data/ism_pmi.csv` : ISM Manufacturing PMI mensuel depuis janvier 2013.
-- `src-tauri/` : application de bureau (commandes appelées par l'interface) et configuration des paquets : `tauri.conf.json` commun, `tauri.linux.conf.json` (`.deb`), `tauri.windows.conf.json` (installateur NSIS).
+- `trading/` : moteur de trading, sans dépendance vers `core/`.
+  - `poloniex.rs`, `feed.rs` : API publique de Poloniex (bougies, funding) et cache mémoire.
+  - `ta.rs` : indicateurs de signal (moyennes mobiles, ATR, plus hauts et plus bas, volatilité réalisée).
+  - `strategy.rs` : module tendance (ensemble Donchian, croisement EMA).
+  - `risk.rs` : cible de volatilité, plafond de levier, rééquilibrage, stop suiveur, coupe-circuits.
+  - `backtest.rs`, `metrics.rs` : simulation barre par barre et mesures de performance.
+  - `signals.rs` : signal à la dernière clôture.
+  - `chart.rs`, `tools.json` : figures et pages de la section Trading.
+- `src-tauri/` : application de bureau (commandes appelées par l'interface ; celles de la section Trading dans `src/trading.rs`) et configuration des paquets : `tauri.conf.json` commun, `tauri.linux.conf.json` (`.deb`), `tauri.windows.conf.json` (installateur NSIS).
 - `ui/` : interface (HTML/CSS/JavaScript, sans étape de compilation).
 - `scripts/` : copie de Plotly.js dans `ui/vendor/`, changement de version.

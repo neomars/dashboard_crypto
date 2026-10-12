@@ -1,0 +1,18 @@
+[
+    {
+        "id": "trend_signals",
+        "name": "Signaux de tendance",
+        "icon": "🧭",
+        "description": "Ce que le moteur de trading viserait à la dernière clôture : score de tendance (−1 à +1) et exposition cible, calculés sur les bougies Poloniex.",
+        "default_scale": "logarithmique",
+        "interpretation": "Score +1 : les quatre cassures de Donchian (20, 55, 100 et 200 bougies) sont acheteuses ; 0 : pas de tendance ; −1 : vendeuses (perpétuel uniquement). L'exposition cible ramène la position à 25 % de volatilité annualisée, plafonnée à 1x en spot et 2x en perpétuel. Ces signaux ne passent aucun ordre."
+    },
+    {
+        "id": "trend_backtest",
+        "name": "Backtest tendance",
+        "icon": "🧪",
+        "description": "Rejoue le module tendance sur l'historique Poloniex : exécution à l'ouverture suivante, frais, glissement, funding, stop suiveur et coupe-circuits compris.",
+        "default_scale": "logarithmique",
+        "interpretation": "Comparez au Buy & Hold le drawdown maximal autant que la performance : le suivi de tendance vise d'abord à éviter les grosses baisses. Un backtest favorable n'est pas une preuve : validez sur une période non utilisée pour régler les paramètres, puis en paper trading, avant d'engager de l'argent réel."
+    }
+]

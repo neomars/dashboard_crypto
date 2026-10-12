@@ -1,6 +1,10 @@
 // Pas de console supplémentaire sous Windows en version release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// Section « Trading » : commandes du moteur de trading, séparées de celles des
+// indicateurs de marché ci-dessous.
+mod trading;
+
 use dashboard_core::catalog::{self, IndicatorMeta};
 use dashboard_core::config::Config;
 use dashboard_core::figure::Figure;
@@ -213,6 +217,7 @@ fn main() {
             data: DataProvider::new(Config::default_location()),
             last_simulation: Mutex::new(None),
         })
+        .manage(trading::TradingState::default())
         .invoke_handler(tauri::generate_handler![
             list_indicators,
             app_version,
@@ -222,7 +227,11 @@ fn main() {
             get_settings,
             save_endpoint,
             save_sec_user_agent,
-            clear_cache
+            clear_cache,
+            trading::list_trading_tools,
+            trading::trading_signals,
+            trading::run_backtest,
+            trading::export_backtest
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de l'application");
