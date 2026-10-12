@@ -140,12 +140,19 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
 .table-wrap { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+.table-wrap td:first-child { white-space: nowrap; }
 
 .tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .tool { text-align: left; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; color: var(--text); font: inherit; cursor: pointer; }
 .tool:hover { border-color: var(--accent); }
 .tool strong { display: block; margin-bottom: 4px; }
 .tool span { color: var(--muted); font-size: 13px; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 4px; }
+.chip { border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 13px; background: var(--panel); }
+.chip.up { color: var(--success-text); border-color: var(--success); }
+.chip.down { color: var(--error-text); border-color: var(--error); }
+.chip.flat { color: var(--muted); }
 
 .queries td { vertical-align: middle; }
 .queries td input { width: 320px; }

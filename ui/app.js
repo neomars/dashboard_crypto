@@ -31,10 +31,18 @@ const SOURCES = [
   ["Bitcoin-Dataset (GitHub)", "https://github.com/Yrzxiong/Bitcoin-Dataset", "historique du prix BTC 2010-2018"],
   ["ISM PMI (ism-feed, GitHub)", "https://github.com/sofiaverma06/ism-feed", "ISM Manufacturing PMI mensuel : fichier intégré (2013 →), complété par ce CSV public et par config.ini (section [PMI])"],
   ["Strategy / SEC EDGAR", "https://www.sec.gov/edgar/browse/?CIK=1050446", "BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré, complété à chaque affichage par les dernières publications SEC (contact requis, voir plus bas) et par config.ini"],
+  ["Poloniex", "https://api-docs.poloniex.com", "section Trading uniquement : bougies spot et perpétuel, historique du funding (180 derniers jours seulement)"],
 ];
+
+// Section Trading : actifs disponibles en spot et en perpétuel USDT sur Poloniex.
+const TRADING_ASSETS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "LTC", "BNB", "ADA", "AVAX", "LINK", "TRX"];
+const MARKETS = [["spot", "Spot"], ["perp", "Perpétuel USDT"]];
+const INTERVALS = [["DAY_1", "1 jour"], ["HOUR_4", "4 heures"]];
+const VARIANTS = [["donchian", "Ensemble Donchian (20, 55, 100, 200)"], ["ema", "Croisement EMA 20/100 + filtre SMA 200"]];
 
 const state = {
   indicators: [],
+  trading: [],     // pages du moteur de trading, séparées des indicateurs de marché
   selection: "home",
   scale: {},       // échelle choisie par indicateur
   params: {        // paramètres saisis par indicateur
@@ -44,6 +52,8 @@ const state = {
     pmi_btc: { sma: 24 },
   },
   sim: null,
+  signal: { base: "BTC", market: "spot", interval: "DAY_1", variant: "donchian" },
+  bt: null,        // paramètres du backtest de la section Trading
   requestId: 0,
 };
 
@@ -105,12 +115,16 @@ function renderNav() {
   }, label);
 
   nav.append(button("home", "🏠 Accueil"));
+  if (state.trading.length) {
+    nav.append(el("h3", {}, "Trading"));
+    state.trading.forEach((t) => nav.append(button(t.id, `${t.icon} ${t.name}`)));
+  }
   const special = state.indicators.filter((i) => i.is_special);
   if (special.length) {
     nav.append(el("h3", {}, "Simulation"));
     special.forEach((i) => nav.append(button(i.id, `${i.icon} ${i.name}`)));
   }
-  nav.append(el("h3", {}, "Indicateurs"));
+  nav.append(el("h3", {}, "Indicateurs de marché"));
   state.indicators.filter((i) => !i.is_special).forEach((i) => nav.append(button(i.id, `${i.icon} ${i.name}`)));
 }
 
@@ -127,7 +141,7 @@ function scaleFor(ind) {
   return state.scale[ind.id] || (ind.default_scale === "logarithmique" ? "log" : "linear");
 }
 
-const current = () => state.indicators.find((i) => i.id === state.selection);
+const current = () => [...state.trading, ...state.indicators].find((i) => i.id === state.selection);
 
 function select(id) {
   state.selection = id;
@@ -142,6 +156,8 @@ function render() {
   const ind = current();
   if (!ind) return renderHome();
   if (ind.id === "simulator") return renderSimulator(ind);
+  if (ind.id === "trend_signals") return renderTrendSignals(ind);
+  if (ind.id === "trend_backtest") return renderBacktest(ind);
   return renderIndicator(ind);
 }
 
@@ -157,10 +173,16 @@ async function renderHome() {
   main.append(el("h2", {}, "🌐 Sources et configuration"), config);
 
   main.append(el("h2", {}, "Explorez nos outils"));
-  const tools = el("div", { class: "tools" });
-  state.indicators.forEach((i) => tools.append(el("button", { class: "tool", type: "button", onclick: () => select(i.id) },
+  const tools = (items) => el("div", { class: "tools" }, items.map((i) => el("button", { class: "tool", type: "button", onclick: () => select(i.id) },
     el("strong", {}, `${i.icon} ${i.name}`), el("span", {}, i.description))));
-  main.append(tools);
+  if (state.trading.length) {
+    main.append(el("h3", {}, "Trading"),
+      el("p", { class: "muted" }, "Moteur de trading séparé : ses propres données (Poloniex), ses indicateurs de signal, ses règles de risque et son backtest. Aucun ordre réel n'est passé."),
+      tools(state.trading));
+  }
+  main.append(el("h3", {}, "Indicateurs de marché et simulation"),
+    el("p", { class: "muted" }, "Outils d'analyse : ils n'alimentent pas le moteur de trading et ne déclenchent aucun ordre."),
+    tools(state.indicators));
 
   renderSettings(config);
 }
@@ -418,6 +440,193 @@ async function runSimulation(ind, box) {
     el("button", { class: "btn", type: "button", onclick: () => exportAs("pdf") }, "Télécharger le rapport PDF")), status);
 }
 
+// ---------- Trading (moteur séparé des indicateurs de marché) ----------
+
+// Prix et quantités : 6 chiffres significatifs (le DOGE cote 0,1 USDT, le BTC 80 000).
+const fmtSig = (v) => v.toLocaleString("fr-FR", { maximumSignificantDigits: 6 });
+const fmtPct = (v, digits = 1) => (v == null ? "–" : `${fmtNumber(v, digits)} %`);
+const fmtRatio = (v) => (v == null ? "–" : fmtNumber(v, 2));
+const fmtExposure = (x) => `${x > 0 ? "+" : ""}${fmtNumber(x * 100, 0)} % du capital`;
+
+function metricCard(label, value, sub, delta) {
+  return el("div", { class: "metric" },
+    el("div", { class: "label" }, label), el("div", { class: "value" }, value),
+    delta != null && el("div", { class: `delta ${delta >= 0 ? "up" : "down"}` }, `${delta >= 0 ? "▲" : "▼"} ${fmtNumber(delta)} %`),
+    sub && el("div", { class: "sub" }, sub));
+}
+
+function scoreLabel(score) {
+  if (score == null) return "–";
+  const side = score > 0 ? "acheteur" : score < 0 ? "vendeur" : "neutre";
+  return `${score > 0 ? "+" : ""}${fmtNumber(score, 2)} (${side})`;
+}
+
+// Actif, marché, bougies et variante, communs aux deux pages Trading.
+function tradingControls(p, onChange) {
+  const select = (key, options) => el("select", { onchange: (e) => { p[key] = e.target.value; onChange(key); } },
+    options.map(([value, label]) => el("option", { value, selected: value === p[key] }, label)));
+  const field = (label, input) => el("label", { class: "field" }, el("span", {}, label), input);
+  return el("div", { class: "controls" },
+    field("Actif", select("base", TRADING_ASSETS.map((a) => [a, `${a}/USDT`]))),
+    field("Marché", select("market", MARKETS)),
+    field("Bougies", select("interval", INTERVALS)),
+    field("Variante du module tendance", select("variant", VARIANTS)));
+}
+
+function renderTrendSignals(ind) {
+  const results = el("div");
+  const refresh = () => loadTrendSignals(ind, results);
+  main.replaceChildren(
+    el("h1", {}, `${ind.icon} ${ind.name}`),
+    el("p", { class: "muted" }, ind.description),
+    tradingControls(state.signal, refresh),
+    results,
+  );
+  refresh();
+}
+
+async function loadTrendSignals(ind, box) {
+  const id = ++state.requestId;
+  box.replaceChildren(loading("Chargement des bougies Poloniex…"));
+  let r;
+  try {
+    r = await invoke("trading_signals", { params: state.signal });
+  } catch (e) {
+    if (id === state.requestId) box.replaceChildren(notice("error", String(e)));
+    return;
+  }
+  if (id !== state.requestId) return;
+
+  box.replaceChildren(el("div", { class: "metrics" },
+    metricCard("Score de tendance", scoreLabel(r.score), `Clôture du ${r.last_date} : ${fmtSig(r.close)} USDT`),
+    metricCard("Exposition cible", fmtExposure(r.target_exposure), `Plafond : ${fmtNumber(r.max_leverage, 0)}x, volatilité visée 25 %/an`),
+    metricCard("Volatilité réalisée (30 j)", fmtPct(r.realized_vol_pct), "Annualisée"),
+    metricCard("Stop indicatif (3 ATR)", r.stop_hint == null ? "–" : `${fmtSig(r.stop_hint)} USDT`, r.atr == null ? null : `ATR 20 : ${fmtSig(r.atr)} USDT`)));
+  if (r.components.length) {
+    const chip = (c) => {
+      const [cls, mark] = c.state > 0 ? ["up", "▲ acheteur"] : c.state < 0 ? ["down", "▼ vendeur"] : ["flat", "– neutre"];
+      return el("span", { class: `chip ${cls}` }, `${c.lookback} bougies : ${c.state == null ? "–" : mark}`);
+    };
+    box.append(el("div", { class: "chips" }, el("span", { class: "muted" }, "Cassures de Donchian :"), r.components.map(chip)));
+  }
+  plot(box, r.chart, scaleFor(ind));
+  if (ind.interpretation) box.append(notice("info", `💡 Interprétation : ${ind.interpretation}`));
+}
+
+function renderBacktest(ind) {
+  const p = state.bt || (state.bt = {
+    base: "BTC", market: "spot", interval: "DAY_1", variant: "donchian",
+    start: "2018-01-01", end: today(), initial_capital: 10000,
+    target_vol_pct: 25, max_leverage: 1, stop_atr_mult: 3,
+    fee_pct: 0.075, slippage_pct: 0.05, rebalance_pct: 20, funding_pct_8h: 0.01,
+    halt_on_breach: false,
+  });
+  const results = el("div");
+  const run = debounce(() => runBacktest(ind, results), 400);
+  const field = (label, input) => el("label", { class: "field" }, el("span", {}, label), input);
+  const input = (key, type, attrs = {}) => el("input", { type, value: p[key], ...attrs,
+    onchange: (e) => { p[key] = type === "number" ? Number(e.target.value) : e.target.value; run(); } });
+  const leverage = input("max_leverage", "number", { step: 0.5, min: 0.5, max: 5 });
+  // Levier par défaut du marché choisi : 1x en spot (pas d'emprunt), 2x en perpétuel.
+  const onChange = (key) => {
+    if (key === "market") {
+      p.max_leverage = p.market === "perp" ? 2 : 1;
+      leverage.value = p.max_leverage;
+    }
+    run();
+  };
+  const halt = el("input", { type: "checkbox", checked: p.halt_on_breach,
+    onchange: (e) => { p.halt_on_breach = e.target.checked; run(); } });
+
+  main.replaceChildren(
+    el("h1", {}, `${ind.icon} ${ind.name}`),
+    el("p", { class: "muted" }, ind.description),
+    tradingControls(p, onChange),
+    el("div", { class: "controls" },
+      field("Date de début", input("start", "date")),
+      field("Date de fin (exclue)", input("end", "date")),
+      field("Capital initial (USDT)", input("initial_capital", "number", { step: 100, min: 1 })),
+      field("Volatilité visée (%/an)", input("target_vol_pct", "number", { step: 5, min: 1, max: 100 })),
+      field("Levier maximal (x)", leverage)),
+    el("div", { class: "controls" },
+      field("Stop suiveur (ATR, 0 = aucun)", input("stop_atr_mult", "number", { step: 0.5, min: 0, max: 10 })),
+      field("Seuil de rééquilibrage (%)", input("rebalance_pct", "number", { step: 5, min: 0, max: 100 })),
+      field("Frais par ordre (%)", input("fee_pct", "number", { step: 0.005, min: 0, max: 1 })),
+      field("Glissement (%)", input("slippage_pct", "number", { step: 0.01, min: 0, max: 1 })),
+      field("Funding supposé (% / 8 h)", input("funding_pct_8h", "number", { step: 0.005, min: -1, max: 1 }))),
+    el("div", { class: "controls" }, el("label", {}, halt, " Arrêter au premier coupe-circuit (perte de 3 % sur un jour ou de 10 % depuis le plus haut), comme le fera le moteur en réel")),
+    el("p", { class: "muted" }, "Chaque ordre est décidé à une clôture et exécuté à l'ouverture suivante, au prix glissé, frais déduits. Poloniex ne fournit l'historique du funding que sur 180 jours : au-delà, le funding supposé s'applique (perpétuel uniquement)."),
+    results,
+  );
+  runBacktest(ind, results);
+}
+
+async function runBacktest(ind, box) {
+  const id = ++state.requestId;
+  const p = state.bt;
+  if (p.start >= p.end) {
+    box.replaceChildren(notice("error", "La date de début doit être antérieure à la date de fin."));
+    return;
+  }
+  box.replaceChildren(loading("Backtest en cours (chargement des bougies Poloniex)…"));
+  let res;
+  try {
+    res = await invoke("run_backtest", { params: p });
+  } catch (e) {
+    if (id === state.requestId) box.replaceChildren(notice("error", String(e)));
+    return;
+  }
+  if (id !== state.requestId) return;
+
+  const s = res.summary;
+  const st = s.strategy;
+  const bh = s.buy_hold;
+  box.replaceChildren();
+  res.warnings.forEach((w) => box.append(notice("warning", w)));
+  if (s.liquidated) box.append(notice("error", "💀 Position liquidée : le capital ne couvrait plus la marge de maintenance. Le backtest s'arrête à cette date."));
+  box.append(el("div", { class: "metrics" },
+    metricCard("Capital final (USDT)", fmtNumber(st.final_equity), `Du ${s.first_date} au ${s.last_date}`, st.total_return_pct),
+    metricCard("Rendement annualisé", fmtPct(st.cagr_pct), `Buy & Hold : ${fmtPct(bh.cagr_pct)}`),
+    metricCard("Drawdown maximal", fmtPct(st.max_drawdown_pct), `Buy & Hold : ${fmtPct(bh.max_drawdown_pct)}`),
+    metricCard("Sharpe", fmtRatio(st.sharpe), `Buy & Hold : ${fmtRatio(bh.sharpe)} · Sortino : ${fmtRatio(st.sortino)}`),
+    metricCard("Ordres", String(s.fills), `${s.round_trips} allers-retours, ${s.win_rate_pct == null ? "–" : fmtPct(s.win_rate_pct, 0)} gagnants, ${s.stops} stops`),
+    metricCard("Frais + funding (USDT)", fmtNumber(s.fees + s.funding), `Frais : ${fmtNumber(s.fees)} · funding : ${fmtNumber(s.funding)}`),
+    metricCard("Temps investi", fmtPct(s.exposure_pct, 0), `Levier moyen : ${fmtNumber(s.avg_leverage)}x · rotation : ${fmtNumber(s.turnover, 1)}x/an`)));
+  if (p.market === "perp") {
+    box.append(notice("info", `Funding : réel sur ${s.funding_real_periods} paiements (180 derniers jours), supposé à ${fmtNumber(p.funding_pct_8h, 3)} % par 8 h sur ${s.funding_estimated_periods} paiements. Montant négatif : funding reçu.`));
+  }
+  if (s.circuit_breakers) {
+    box.append(notice("warning", `Coupe-circuit déclenché ${s.circuit_breakers} fois.${s.halted ? " Le backtest s'est arrêté au premier, comme le moteur en réel." : " Cochez « Arrêter au premier coupe-circuit » pour voir l'effet de l'arrêt."}`));
+  }
+  plot(box, res.chart, scaleFor(ind));
+  if (ind.interpretation) box.append(notice("info", `💡 ${ind.interpretation}`));
+
+  const table = (headers, rows) => el("div", { class: "table-wrap" }, el("table", {},
+    el("thead", {}, el("tr", {}, headers.map((h) => el("th", {}, h)))),
+    el("tbody", {}, rows.map((cells) => el("tr", {}, cells.map((c) => el("td", {}, c)))))));
+  if (res.events.length) {
+    box.append(el("h2", {}, "🛡️ Événements de risque"),
+      table(["Date", "Type", "Détail"], res.events.map((e) => [e.date, e.kind, e.detail])));
+  }
+  if (res.fills.length) {
+    box.append(el("h2", {}, "📝 Journal des ordres"), table(
+      ["Date", "Origine", "Sens", "Prix", "Quantité", "Montant (USDT)", "Frais (USDT)", "Exposition après", "Détail"],
+      res.fills.map((f) => [f.date, f.kind, f.side, fmtSig(f.price), fmtSig(f.quantity), fmtNumber(f.notional),
+        fmtNumber(f.fee), `${fmtNumber(f.exposure_after, 2)}x`, f.detail])));
+  }
+
+  const status = el("div");
+  const exportAs = async (format) => {
+    try {
+      const path = await invoke("export_backtest", { format });
+      if (path) status.replaceChildren(notice("success", `Fichier enregistré : ${path}`));
+    } catch (e) { status.replaceChildren(notice("error", String(e))); }
+  };
+  box.append(el("h2", {}, "📥 Exporter les résultats"), el("div", { class: "row" },
+    el("button", { class: "btn", type: "button", onclick: () => exportAs("equity") }, "Courbe de capital (CSV)"),
+    el("button", { class: "btn", type: "button", onclick: () => exportAs("fills") }, "Journal des ordres (CSV)")), status);
+}
+
 // ---------- Démarrage ----------
 
 document.querySelectorAll("#scale input").forEach((radio) => radio.addEventListener("change", () => {
@@ -430,6 +639,7 @@ document.querySelectorAll("#scale input").forEach((radio) => radio.addEventListe
 (async () => {
   try {
     state.indicators = await invoke("list_indicators");
+    state.trading = await invoke("list_trading_tools");
     document.getElementById("version").textContent = `Version ${await invoke("app_version")}`;
   } catch (e) {
     main.replaceChildren(notice("error", `Impossible de démarrer : ${e}`));
