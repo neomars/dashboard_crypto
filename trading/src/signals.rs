@@ -42,6 +42,9 @@ impl SignalParams {
             - Duration::days(match self.interval {
                 Interval::D1 => 3 * 365,
                 Interval::H4 => 365,
+                Interval::H1 => 90,
+                Interval::M15 => 30,
+                Interval::M1 => 3,
             })
     }
 
@@ -50,6 +53,9 @@ impl SignalParams {
         self.interval.bars_for_days(match self.interval {
             Interval::D1 => 730,
             Interval::H4 => 180,
+            Interval::H1 => 30,
+            Interval::M15 => 7,
+            Interval::M1 => 1,
         })
     }
 }

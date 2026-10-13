@@ -122,7 +122,7 @@ impl MarketFeed {
         );
     }
 
-    async fn get_json(&self, (url, query): &Request) -> Result<Value, String> {
+    pub(crate) async fn get_json(&self, (url, query): &Request) -> Result<Value, String> {
         let resp = self
             .http
             .get(url)

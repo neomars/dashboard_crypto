@@ -20,9 +20,16 @@
 
 pub mod accumulation;
 pub mod backtest;
+pub mod candle_store;
 pub mod catalog;
 pub mod chart;
+pub mod contract;
 pub mod feed;
+pub mod fibo;
+pub mod fibo_chart;
+pub mod fibo_data;
+pub mod fibo_report;
+pub mod leveraged;
 pub mod market;
 pub mod metrics;
 pub mod mvrv;
@@ -31,5 +38,6 @@ pub mod risk;
 pub mod signals;
 pub mod strategy;
 pub mod ta;
+pub mod validation;
 
 pub use feed::MarketFeed;

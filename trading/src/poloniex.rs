@@ -54,6 +54,36 @@ pub fn candles_request(inst: &Instrument, interval: Interval, start: i64, end: i
     }
 }
 
+/// Page de bougies du **prix de marque** du perpétuel (sert aux liquidations).
+/// Endpoint `GET /v3/market/markPriceCandlesticks`, relevé dans l'implémentation
+/// de référence `ccxt` ; ses paramètres sont supposés identiques à ceux de
+/// `/v3/market/candles` (non vérifié sur l'API).
+pub fn mark_candles_request(
+    inst: &Instrument,
+    interval: Interval,
+    start: i64,
+    end: i64,
+) -> Request {
+    let (_, query) = candles_request(inst, interval, start, end);
+    (format!("{BASE_URL}/v3/market/markPriceCandlesticks"), query)
+}
+
+/// Fiche du contrat perpétuel : `GET /v3/market/allInstruments?symbol=…`.
+pub fn instrument_request(inst: &Instrument) -> Request {
+    (
+        format!("{BASE_URL}/v3/market/allInstruments"),
+        vec![("symbol", inst.symbol())],
+    )
+}
+
+/// Paliers de limite de risque : `GET /v3/market/riskLimit?symbol=…`.
+pub fn risk_limit_request(inst: &Instrument) -> Request {
+    (
+        format!("{BASE_URL}/v3/market/riskLimit"),
+        vec![("symbol", inst.symbol())],
+    )
+}
+
 /// Page de l'historique du funding entre `start` et `end` (ms).
 pub fn funding_request(inst: &Instrument, start: i64, end: i64) -> Request {
     (
@@ -68,7 +98,7 @@ pub fn funding_request(inst: &Instrument, start: i64, end: i64) -> Request {
 }
 
 /// Nombre écrit en JSON comme nombre ou comme chaîne.
-fn num(v: &Value) -> Option<f64> {
+pub(crate) fn num(v: &Value) -> Option<f64> {
     match v {
         Value::Number(n) => n.as_f64(),
         Value::String(s) => s.trim().parse::<f64>().ok(),
@@ -96,7 +126,7 @@ pub fn api_error(body: &Value) -> Option<String> {
 }
 
 /// Données `data` d'une réponse `{code: 200, msg, data}` (perpétuel).
-fn v3_data(body: &Value) -> Result<&Vec<Value>, String> {
+pub(crate) fn v3_data(body: &Value) -> Result<&Vec<Value>, String> {
     if let Some(err) = api_error(body) {
         return Err(err);
     }
@@ -237,6 +267,51 @@ mod tests {
         assert_eq!(bars.len(), 1);
         assert_eq!(bars[0].close, 82945.68);
         assert_eq!(bars[0].time, 1791590400000);
+    }
+
+    #[test]
+    fn parses_one_minute_perp_candles_and_builds_minute_requests() {
+        // La première ligne est un extrait de la documentation de `ccxt` pour
+        // `/v3/market/candles` (bougie 1 minute) ; la seconde, construite à la main
+        // dans le même format, la suit d'une minute.
+        let body = json!({"code": "200", "msg": "Success", "data": [
+            ["84207.02", "84320.85", "84207.02", "84253.83", "3707.5395", "44", "14", "1740770040000", "1740770099999"],
+            ["84240.1", "84300.0", "84253.83", "84290.5", "1200.1", "15", "9", "1740770100000", "1740770159999"]
+        ]});
+        let bars = parse_candles(Market::Perp, &body).unwrap();
+        assert_eq!(bars.len(), 2);
+        assert_eq!(
+            (bars[0].low, bars[0].high, bars[0].open, bars[0].close),
+            (84207.02, 84320.85, 84207.02, 84253.83)
+        );
+        assert_eq!(
+            bars[1].time - bars[0].time,
+            60_000,
+            "une minute entre les ouvertures"
+        );
+
+        let perp = Instrument::new("BTC", Market::Perp).unwrap();
+        let (url, q) = candles_request(&perp, Interval::M1, 1740770040000, 1740770099999);
+        assert!(url.ends_with("/v3/market/candles"));
+        assert!(
+            q.contains(&("interval", "MINUTE_1".into())) && q.contains(&("limit", "500".into()))
+        );
+        let (url, q) = mark_candles_request(&perp, Interval::M1, 1, 2);
+        assert!(url.ends_with("/v3/market/markPriceCandlesticks"));
+        assert!(q.contains(&("symbol", "BTC_USDT_PERP".into())));
+        let spot = Instrument::new("BTC", Market::Spot).unwrap();
+        let (_, q) = candles_request(&spot, Interval::M1, 1, 2);
+        assert!(
+            q.contains(&("interval", "MINUTE_1".into())) && q.contains(&("startTime", "1".into()))
+        );
+        let (url, q) = instrument_request(&perp);
+        assert!(
+            url.ends_with("/v3/market/allInstruments")
+                && q == vec![("symbol", "BTC_USDT_PERP".to_string())]
+        );
+        assert!(risk_limit_request(&perp)
+            .0
+            .ends_with("/v3/market/riskLimit"));
     }
 
     #[test]

@@ -414,3 +414,251 @@ async fn accumulation_without_any_mvrv_falls_back_to_the_average() {
         .iter()
         .any(|w| w.contains("plus de 3") || w.contains("Aucune donnée MVRV")));
 }
+
+// ---------- Fibonacci à levier : de bout en bout, sans réseau ----------
+
+use std::sync::atomic::AtomicBool;
+use trading_engine::candle_store::{CandleStore, SeriesKey};
+use trading_engine::contract::{ContractSpec, MaintenanceTier};
+use trading_engine::fibo::FiboParams;
+use trading_engine::fibo_report::{
+    build_report, load_data, load_excursions, load_points, trade_zoom, FiboRequest,
+};
+use trading_engine::leveraged::{Account, Costs, TradeRules};
+use trading_engine::validation::PlaceboParams;
+
+/// Marche aléatoire 1 minute à partir de `start`, prix de l'ordre de 60 000.
+fn minute_walk(start: &str, days: usize, seed: u64) -> Vec<Bar> {
+    let mut state = seed;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state as f64 / u64::MAX as f64 - 0.5
+    };
+    let t0 = date_ms(d(start));
+    let mut price: f64 = 60_000.0;
+    (0..days * 1440)
+        .map(|i| {
+            let open = price;
+            let close = open * (1.0 + 0.0003 * (next() + next() + next() + next()) * 1.732);
+            price = close;
+            Bar {
+                time: t0 + i as i64 * 60_000,
+                open,
+                high: open.max(close) * (1.0 + 0.0001 * (next() + 0.5)),
+                low: open.min(close) * (1.0 - 0.0001 * (next() + 0.5)),
+                close,
+                volume: 0.0,
+            }
+        })
+        .collect()
+}
+
+fn btc_contract() -> ContractSpec {
+    ContractSpec {
+        symbol: "BTC_USDT_PERP".into(),
+        max_leverage: 75.0,
+        contract_value: 0.001,
+        lot_size: 1.0,
+        min_size: 1.0,
+        tick_size: 0.1,
+        tiers: vec![MaintenanceTier {
+            up_to_contracts: None,
+            rate: 0.005,
+        }],
+        tiers_from_risk_limit: false,
+        warnings: vec![],
+    }
+}
+
+#[tokio::test]
+async fn fibo_page_renders_from_cached_data() {
+    let dir = std::env::temp_dir().join(format!("fibo-render-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let store = CandleStore::new(&dir);
+    let feed = MarketFeed::new();
+    let perp = Instrument::new("BTC", Market::Perp).unwrap();
+
+    // 1 minute du perpétuel de décembre 2023 à fin avril 2024, dans le cache disque.
+    let bars = minute_walk("2023-12-01", 152, 0xF1B0_0123_4567_89AB);
+    let key = SeriesKey::new("BTC_USDT_PERP", Interval::M1, false);
+    store
+        .append(
+            &key,
+            &bars,
+            &[(bars[0].time, bars.last().unwrap().time + 60_000)],
+        )
+        .unwrap();
+    // Fiche du contrat déjà lue (réutilisée sans réseau pendant 24 h), funding vide.
+    store
+        .write_json(
+            "contract_BTC_USDT_PERP.json",
+            &serde_json::json!({"fetched_at": Utc::now().timestamp_millis(), "spec": btc_contract()}),
+        )
+        .unwrap();
+    feed.seed_funding(&perp, Vec::new());
+
+    let req = FiboRequest {
+        base: "BTC".into(),
+        fibo: FiboParams::default(),
+        rules: TradeRules::default(),
+        costs: Costs::default(),
+        account: Account {
+            initial_budget: 500.0,
+            margin: 10.0,
+            leverage: 10.0,
+            r_only: false,
+        },
+        study_start: d("2024-01-01"),
+        study_end: d("2024-02-29"),
+        test_start: d("2024-03-01"),
+        test_end: d("2024-04-30"),
+        placebo: PlaceboParams {
+            draws: 12,
+            ..PlaceboParams::default()
+        },
+        mc_draws: 1000,
+        use_mark_price: false,
+    };
+    let data = load_data(&feed, &store, &req).await.unwrap();
+    assert_eq!(data.spec.max_leverage, 75.0);
+    assert!(data.warnings.is_empty(), "{:?}", data.warnings);
+    let report = build_report(&req, &data, &|_, _, _| {}, &AtomicBool::new(false)).unwrap();
+    for p in [&report.study, &report.test] {
+        assert!(
+            p.summary.trades > 0 && p.placebo.draws.len() == 12,
+            "{}",
+            p.label
+        );
+        assert!(p.monte_carlo.is_some());
+    }
+    assert!(!report.test.trades.is_empty());
+    assert_ne!(report.verdict.label, "");
+    // Zoom sur un trade, depuis le cache disque.
+    let zoom = trade_zoom(&store, "BTC", &report.test.trades[0]).unwrap();
+    assert!(zoom.data.len() >= 5);
+
+    // Levier au-delà du maximum : refusé avant tout calcul.
+    let too_much = FiboRequest {
+        account: Account {
+            leverage: 100.0,
+            ..req.account
+        },
+        ..req.clone()
+    };
+    assert!(load_data(&feed, &store, &too_much)
+        .await
+        .unwrap_err()
+        .contains("maximum"));
+    // Sans cache pour la période : message clair.
+    let empty = CandleStore::new(dir.join("vide"));
+    empty
+        .write_json("contract_BTC_USDT_PERP.json", &serde_json::json!({"fetched_at": Utc::now().timestamp_millis(), "spec": btc_contract()}))
+        .unwrap();
+    assert!(load_data(&feed, &empty, &req)
+        .await
+        .unwrap_err()
+        .contains("téléchargement"));
+
+    // Points actuels : bougies de détection récentes (cache mémoire du flux).
+    let today = Utc::now().date_naive();
+    let from = today - chrono::Duration::days(30);
+    let hours: Vec<Bar> = trading_engine::fibo::aggregate(
+        &minute_walk(&(today - chrono::Duration::days(60)).to_string(), 59, 7),
+        Interval::M1,
+        Interval::H1,
+    );
+    feed.seed_bars(&perp, Interval::H1, from, hours);
+    let points = load_points(&feed, &store, "BTC", &req.fibo, false, today)
+        .await
+        .unwrap();
+    assert!(points.current.is_some() && points.threshold.is_some());
+
+    // Contrôle des repères : bougies journalières du 01/05 au 12/10/2026.
+    let spot = Instrument::new("BTC", Market::Spot).unwrap();
+    let days: Vec<Bar> = synthetic("2026-04-15", 70_000.0, 5)
+        .into_iter()
+        .filter(|b| b.time < date_ms(d("2026-10-14")))
+        .collect();
+    feed.seed_bars(&spot, Interval::D1, d("2026-05-01"), days);
+    let ex = load_excursions(&feed).await.unwrap();
+    assert_eq!(ex.days, 165, "du 01/05 au 12/10/2026 inclus");
+    assert_eq!(ex.rows.len(), 4);
+
+    if let Ok(path) = std::env::var("TRADING_FIBO_JSON") {
+        let view = serde_json::json!({"report": report, "points": points, "excursions": ex});
+        std::fs::write(path, view.to_string()).unwrap();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Mesure de durée (version release) : 3 ans de 1 minute, 200 tirages placebo par période.
+/// `cargo test --release -p trading-engine --test render_trading fibo_timing -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn fibo_timing() {
+    let started = std::time::Instant::now();
+    let bars = minute_walk("2022-12-01", 1410, 0xABCD_EF01_2345_6789); // jusqu'à mi-octobre 2026
+    eprintln!(
+        "{} bougies 1 minute générées en {:?}",
+        bars.len(),
+        started.elapsed()
+    );
+    let req = FiboRequest {
+        base: "BTC".into(),
+        fibo: FiboParams::default(),
+        rules: TradeRules::default(),
+        costs: Costs::default(),
+        account: Account {
+            initial_budget: 500.0,
+            margin: 10.0,
+            leverage: 20.0,
+            r_only: false,
+        },
+        study_start: d("2023-01-01"),
+        study_end: d("2024-12-31"),
+        test_start: d("2025-01-01"),
+        test_end: d("2026-10-12"),
+        placebo: PlaceboParams::default(),
+        mc_draws: 10_000,
+        use_mark_price: false,
+    };
+    let data = trading_engine::fibo_report::FiboData {
+        bars,
+        mark: None,
+        funding: vec![],
+        spec: btc_contract(),
+        warnings: vec![],
+    };
+    let one = std::time::Instant::now();
+    let single = trading_engine::leveraged::simulate(
+        &data.bars,
+        None,
+        &[],
+        &data.spec,
+        &trading_engine::leveraged::SimParams {
+            fibo: req.fibo.clone(),
+            rules: req.rules,
+            costs: req.costs,
+            account: req.account,
+            start_ms: date_ms(req.study_start),
+            end_ms: date_ms(req.test_end) + DAY_MS,
+        },
+    );
+    eprintln!(
+        "une simulation sur {} bougies : {:?} ({} trades)",
+        single.bars_in_period,
+        one.elapsed(),
+        single.trades.len()
+    );
+    let t = std::time::Instant::now();
+    let report = build_report(&req, &data, &|_, _, _| {}, &AtomicBool::new(false)).unwrap();
+    eprintln!(
+        "rapport complet (2 périodes × (1 + x1 + niveaux fixes + {} placebo) + Monte-Carlo) : {:?} ; verdict : {}",
+        req.placebo.draws,
+        t.elapsed(),
+        report.verdict.label
+    );
+    assert!(t.elapsed().as_secs() < 30, "objectif : moins de 30 s");
+}
