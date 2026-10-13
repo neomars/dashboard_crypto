@@ -6,10 +6,12 @@ use serde::Serialize;
 use std::sync::Mutex;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
+use trading_engine::accumulation::{self, AccumulationParams, AccumulationSummary, Purchase};
 use trading_engine::backtest::{self, Backtest, BacktestParams, Fill, RiskEvent, Summary};
 use trading_engine::catalog::{self, ToolMeta};
-use trading_engine::chart::{backtest_chart, Chart};
+use trading_engine::chart::{accumulation_chart, backtest_chart, Chart};
 use trading_engine::market::today;
+use trading_engine::mvrv::MvrvInfo;
 use trading_engine::signals::{self, SignalParams, SignalReport};
 use trading_engine::MarketFeed;
 
@@ -39,6 +41,31 @@ pub async fn trading_signals(
     params: SignalParams,
 ) -> Result<SignalReport, String> {
     signals::report_with_feed(&state.feed, &params, today()).await
+}
+
+#[derive(Serialize)]
+pub struct AccumulationView {
+    chart: Chart,
+    summary: AccumulationSummary,
+    purchases: Vec<Purchase>,
+    mvrv: Option<MvrvInfo>,
+    warnings: Vec<String>,
+}
+
+/// Simule l'accumulation de BTC (achats au comptant, jamais de vente).
+#[tauri::command]
+pub async fn run_accumulation(
+    state: State<'_, TradingState>,
+    params: AccumulationParams,
+) -> Result<AccumulationView, String> {
+    let acc = accumulation::run_with_feed(&state.feed, &params, today()).await?;
+    Ok(AccumulationView {
+        chart: accumulation_chart(&acc),
+        summary: acc.summary,
+        purchases: acc.purchases,
+        mvrv: acc.mvrv,
+        warnings: acc.warnings,
+    })
 }
 
 #[derive(Serialize)]

@@ -12,6 +12,10 @@
 //! 3. **clôture** : valorisation, coupe-circuits, mise à jour du stop, puis
 //!    nouveau signal et ordre pour l'ouverture suivante.
 //!
+//! Les résultats se lisent d'abord en nombre de BTC (capital en USDT divisé par
+//! le cours de clôture de BTC_USDT) : la référence est « garder ses BTC »,
+//! achetés au départ avec frais et glissement.
+//!
 //! Aucune décision n'utilise une donnée postérieure à la clôture qui la
 //! déclenche : pas de biais d'anticipation.
 
@@ -21,7 +25,7 @@ use crate::market::{
 };
 use crate::metrics::{performance, Performance};
 use crate::risk::{
-    needs_rebalance, target_exposure, trailing_stop, ATR_LOOKBACK, DAILY_LOSS_LIMIT,
+    needs_rebalance, target_exposure, trailing_stop, DrawdownGuard, ATR_LOOKBACK, DAILY_LOSS_LIMIT,
     HARD_MAX_LEVERAGE, MAINTENANCE_MARGIN, MAX_DRAWDOWN_LIMIT, RECOMMENDED_MAX_LEVERAGE,
     VOL_WINDOW_DAYS,
 };
@@ -31,6 +35,11 @@ use chrono::{Duration, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Write as _;
+
+/// Période minimale (jours) et nombre minimal d'allers-retours pour juger une
+/// stratégie de tendance et annualiser son rendement.
+pub const MIN_JUDGEABLE_DAYS: f64 = 365.0;
+pub const MIN_JUDGEABLE_ROUND_TRIPS: usize = 5;
 
 /// Paramètres d'un backtest, tels que saisis dans l'interface (pourcentages en %).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +197,12 @@ pub struct EquityPoint {
     pub exposure: f64,
     /// Score de tendance à la clôture (−1 à +1).
     pub score: Option<f64>,
+    /// Cours de clôture de BTC_USDT à cette date.
+    pub btc_price: f64,
+    /// Valeur du portefeuille en BTC : capital en USDT / cours de clôture BTC_USDT.
+    pub equity_btc: f64,
+    /// Référence « garder » : BTC achetés au départ (frais et glissement compris), constants.
+    pub hold_btc: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -211,10 +226,33 @@ pub struct Backtest {
     pub warnings: Vec<String>,
 }
 
+/// Résultats en nombre de BTC. La référence « garder » achète des BTC au départ
+/// (frais et glissement compris) et les conserve : multiplicateur 1,00.
+#[derive(Debug, Clone, Serialize)]
+pub struct BtcSummary {
+    /// BTC de la référence « garder » au départ.
+    pub start: f64,
+    /// BTC de la stratégie à la dernière clôture.
+    pub end: f64,
+    /// `end / start` : ×1,00 = autant que « garder ».
+    pub multiplier: f64,
+    /// BTC gagnés (positif) ou perdus (négatif) par rapport à « garder ».
+    pub gained: f64,
+    /// Pire baisse du nombre de BTC, du plus haut au plus bas de la série (%, négative).
+    pub max_drawdown_pct: f64,
+    pub max_drawdown_time: Option<i64>,
+    /// Part des bougies passées entièrement hors BTC, en USDT (%).
+    pub time_out_pct: f64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Summary {
+    /// Résultats en nombre de BTC, référence « garder ses BTC ».
+    pub btc: BtcSummary,
     pub strategy: Performance,
     pub buy_hold: Performance,
+    /// Faux sur une période trop courte : les rendements ne sont pas annualisés.
+    pub annualized: bool,
     pub fills: usize,
     pub round_trips: usize,
     pub win_rate_pct: Option<f64>,
@@ -427,11 +465,21 @@ impl Sim {
     }
 }
 
+/// Dernière bougie de `bars` (triées) ouverte à `time` ou avant.
+fn bar_at(bars: &[Bar], time: i64) -> Option<&Bar> {
+    bars.partition_point(|b| b.time <= time)
+        .checked_sub(1)
+        .map(|k| &bars[k])
+}
+
 /// Exécute le backtest sur `bars` (bougies closes, triées, préchauffage
 /// compris) avec l'historique de funding `funding` (perpétuel, peut être vide).
+/// `btc_bars` : bougies BTC_USDT du même intervalle, qui servent à compter le
+/// portefeuille en BTC ; ignorées (et peuvent être vides) si l'actif testé est BTC.
 pub fn run(
     bars: &[Bar],
     funding: &[FundingRate],
+    btc_bars: &[Bar],
     params: &BacktestParams,
 ) -> Result<Backtest, String> {
     params.validate()?;
@@ -477,6 +525,15 @@ pub fn run(
         )
     })?;
 
+    let btc_bars = if inst.base == "BTC" { bars } else { btc_bars };
+    let btc_error = || {
+        format!(
+            "Cours BTC_USDT indisponibles au {} : impossible de compter le portefeuille en BTC.",
+            fmt_time(bars[first].time, interval)
+        )
+    };
+    let btc_first = bar_at(btc_bars, bars[first].time).ok_or_else(btc_error)?;
+
     let mut warnings = Vec::new();
     if first > first_in_range {
         warnings.push(format!(
@@ -492,6 +549,10 @@ pub fn run(
         warnings.push(format!(
             "Levier maximal {max_lev:.1}x : au-delà des 2x retenus comme plafond pour le trading réel."
         ));
+    }
+
+    if interval == Interval::H4 {
+        warnings.push("Les réglages ont été validés en bougies journalières ; en 4 h, les moyennes ne couvrent que 3 à 33 jours.".into());
     }
 
     let real_funding: HashMap<i64, f64> = funding
@@ -554,14 +615,20 @@ pub fn run(
 
     let entry_price = bars[first].open * (1.0 + slip) * (1.0 + fee);
     let bh_units = params.initial_capital / entry_price;
+    // Référence « garder ses BTC » : achat au premier cours d'ouverture, frais et glissement compris.
+    let btc_open = if btc_first.time == bars[first].time {
+        btc_first.open
+    } else {
+        btc_first.close
+    };
+    let hold_btc = params.initial_capital / (btc_open * (1.0 + slip) * (1.0 + fee));
     let mut points = Vec::with_capacity(last + 1 - first);
     let mut pending = Some(decide(&mut sim, first - 1));
-    let mut peak = params.initial_capital;
+    let mut guard = DrawdownGuard::new(params.initial_capital);
     let mut prev_equity = params.initial_capital;
     let mut day = bars[first].date();
     let mut day_start = params.initial_capital;
     let mut daily_fired = false;
-    let mut dd_breached = false;
 
     for i in first..=last {
         let bar = bars[i];
@@ -642,8 +709,7 @@ pub fn run(
             day_start = prev_equity;
             daily_fired = false;
         }
-        peak = peak.max(equity);
-        let drawdown = if peak > 0.0 { equity / peak - 1.0 } else { 0.0 };
+        let (drawdown, dd_fired) = guard.update(equity);
         let mut breach = None;
         if !daily_fired && day_start > 0.0 && equity / day_start - 1.0 <= -DAILY_LOSS_LIMIT {
             daily_fired = true;
@@ -653,17 +719,13 @@ pub fn run(
                 DAILY_LOSS_LIMIT * 100.0
             ));
         }
-        if drawdown <= -MAX_DRAWDOWN_LIMIT {
-            if !dd_breached {
-                dd_breached = true;
-                breach.get_or_insert(format!(
-                    "Baisse de {:.1} % depuis le plus haut du capital (seuil : {:.0} %).",
-                    -drawdown * 100.0,
-                    MAX_DRAWDOWN_LIMIT * 100.0
-                ));
-            }
-        } else {
-            dd_breached = false;
+        // Un seul déclenchement par épisode : réarmé par un nouveau plus haut du capital.
+        if dd_fired {
+            breach.get_or_insert(format!(
+                "Baisse de {:.1} % depuis le plus haut du capital (seuil : {:.0} %), réarmé au prochain plus haut.",
+                -drawdown * 100.0,
+                MAX_DRAWDOWN_LIMIT * 100.0
+            ));
         }
         if let Some(detail) = breach {
             if !sim.halted {
@@ -685,6 +747,8 @@ pub fn run(
 
         let equity = sim.equity(bar.close);
         prev_equity = equity;
+        let peak = guard.peak();
+        let btc_price = bar_at(btc_bars, bar.time).map_or(bar.close, |b| b.close);
         points.push(EquityPoint {
             time: bar.time,
             close: bar.close,
@@ -697,9 +761,28 @@ pub fn run(
             },
             exposure: sim.exposure(bar.close),
             score: signal.score[i],
+            btc_price,
+            equity_btc: equity / btc_price,
+            hold_btc,
         });
         if i < last && !sim.halted {
             pending = Some(decide(&mut sim, i));
+        }
+    }
+
+    let days = points.len() as f64 / interval.bars_per_day();
+    if days < MIN_JUDGEABLE_DAYS || sim.round_trips.len() < MIN_JUDGEABLE_ROUND_TRIPS {
+        warnings.push(format!(
+            "Période trop courte pour juger une stratégie de tendance ({days:.0} jours, {} allers-retours ; il faut au moins {MIN_JUDGEABLE_DAYS:.0} jours et {MIN_JUDGEABLE_ROUND_TRIPS} allers-retours). Le rendement n'est pas annualisé.",
+            sim.round_trips.len()
+        ));
+    }
+    if let (Some(last_point), Some(btc_last)) = (points.last(), bar_at(btc_bars, bars[last].time)) {
+        if last_point.time - btc_last.time > 2 * interval.millis() {
+            warnings.push(format!(
+                "Les cours BTC_USDT s'arrêtent au {} : le nombre de BTC final utilise ce dernier cours.",
+                fmt_time(btc_last.time, interval)
+            ));
         }
     }
 
@@ -733,7 +816,16 @@ pub async fn run_with_feed(feed: &MarketFeed, params: &BacktestParams) -> Result
         Ok(f) => (f, None),
         Err(e) => (Default::default(), Some(e)),
     };
-    let mut bt = run(&bars, &funding, params)?;
+    // Compter en BTC : si l'actif testé n'est pas BTC, il faut aussi les cours BTC_USDT.
+    let btc_bars = if inst.base == "BTC" {
+        Default::default()
+    } else {
+        let btc = Instrument::new("BTC", Market::Spot)?;
+        feed.bars(&btc, params.interval, params.data_start())
+            .await
+            .map_err(|e| format!("Cours BTC_USDT indisponibles pour compter en BTC : {e}"))?
+    };
+    let mut bt = run(&bars, &funding, &btc_bars, params)?;
     if let Some(e) = funding_error {
         bt.warnings.push(format!(
             "Historique du funding indisponible ({e}) : funding supposé de {} % par 8 h sur toute la période.",
@@ -744,6 +836,51 @@ pub async fn run_with_feed(feed: &MarketFeed, params: &BacktestParams) -> Result
 }
 
 impl Backtest {
+    /// Durée du backtest en jours.
+    pub fn days(&self) -> f64 {
+        self.points.len() as f64 / self.params.interval.bars_per_day()
+    }
+
+    /// Moins d'un an ou moins de 5 allers-retours : trop peu pour juger une
+    /// stratégie de tendance et annualiser son rendement.
+    pub fn too_short(&self) -> bool {
+        self.days() < MIN_JUDGEABLE_DAYS || self.round_trips.len() < MIN_JUDGEABLE_ROUND_TRIPS
+    }
+
+    /// Résultats en nombre de BTC, comparés à « garder ses BTC ».
+    pub fn btc_summary(&self) -> BtcSummary {
+        let start = self.points.first().map_or(0.0, |p| p.hold_btc);
+        let end = self.points.last().map_or(start, |p| p.equity_btc);
+        let (mut peak, mut max_dd, mut max_dd_time) = (start, 0.0f64, None);
+        for p in &self.points {
+            peak = peak.max(p.equity_btc);
+            let dd = if peak > 0.0 {
+                p.equity_btc / peak - 1.0
+            } else {
+                0.0
+            };
+            if dd < max_dd {
+                max_dd = dd;
+                max_dd_time = Some(p.time);
+            }
+        }
+        let n = self.points.len().max(1) as f64;
+        let flat = self
+            .points
+            .iter()
+            .filter(|p| p.exposure.abs() <= 1e-9)
+            .count();
+        BtcSummary {
+            start,
+            end,
+            multiplier: if start > 0.0 { end / start } else { 1.0 },
+            gained: end - start,
+            max_drawdown_pct: max_dd * 100.0,
+            max_drawdown_time: max_dd_time,
+            time_out_pct: flat as f64 / n * 100.0,
+        }
+    }
+
     pub fn summary(&self) -> Summary {
         let bpy = self.params.interval.bars_per_year();
         let times: Vec<i64> = self.points.iter().map(|p| p.time).collect();
@@ -759,9 +896,21 @@ impl Backtest {
         let avg_equity = self.points.iter().map(|p| p.equity).sum::<f64>() / n;
         let wins = self.round_trips.iter().filter(|r| **r > 0.0).count();
         let interval = self.params.interval;
+        let annualized = !self.too_short();
+        // Période trop courte : un rendement annualisé n'aurait pas de sens.
+        let perf = |values: Vec<f64>| {
+            let mut p = performance(&times, &values, capital, bpy);
+            if !annualized {
+                p.cagr_pct = None;
+                p.calmar = None;
+            }
+            p
+        };
         Summary {
-            strategy: performance(&times, &col(|p| p.equity), capital, bpy),
-            buy_hold: performance(&times, &col(|p| p.buy_hold), capital, bpy),
+            btc: self.btc_summary(),
+            annualized,
+            strategy: perf(col(|p| p.equity)),
+            buy_hold: perf(col(|p| p.buy_hold)),
             fills: self.fills.len(),
             round_trips: self.round_trips.len(),
             win_rate_pct: (!self.round_trips.is_empty())
@@ -808,18 +957,20 @@ impl Backtest {
 
     /// Courbe de capital au format CSV (une ligne par bougie).
     pub fn to_csv(&self) -> String {
-        let mut out = String::from("Date,Close,Equity,Buy_Hold,Drawdown_pct,Exposure,Score\n");
+        let mut out =
+            String::from("Date,Close,Equity,Buy_Hold,Drawdown_pct,Exposure,Score,Equity_BTC\n");
         for p in &self.points {
             let _ = writeln!(
                 out,
-                "{},{},{:.2},{:.2},{:.4},{:.4},{}",
+                "{},{},{:.2},{:.2},{:.4},{:.4},{},{:.8}",
                 fmt_time(p.time, self.params.interval),
                 p.close,
                 p.equity,
                 p.buy_hold,
                 p.drawdown_pct,
                 p.exposure,
-                p.score.map(|s| s.to_string()).unwrap_or_default()
+                p.score.map(|s| s.to_string()).unwrap_or_default(),
+                p.equity_btc
             );
         }
         out
@@ -911,7 +1062,7 @@ mod tests {
     #[test]
     fn uptrend_goes_long_and_beats_cash() {
         let bars = bars_from(&uptrend(600), 0.002);
-        let bt = run(&bars, &[], &params(Market::Spot)).unwrap();
+        let bt = run(&bars, &[], &[], &params(Market::Spot)).unwrap();
         let s = bt.summary();
         assert!(s.strategy.final_equity > 10_000.0, "{s:?}");
         assert!(bt
@@ -920,13 +1071,17 @@ mod tests {
             .all(|p| p.exposure >= 0.0 && p.exposure <= 1.0 + 1e-9));
         assert!(s.fees > 0.0);
         assert!(bt.points.iter().all(|p| p.equity > 0.0));
-        assert!(bt.warnings.is_empty(), "{:?}", bt.warnings);
+        // Seul avertissement : la période (environ 11 mois) est trop courte.
+        assert_eq!(bt.warnings.len(), 1, "{:?}", bt.warnings);
+        assert!(
+            bt.warnings[0].starts_with("Période trop courte pour juger une stratégie de tendance")
+        );
     }
 
     #[test]
     fn decisions_are_executed_at_the_next_open() {
         let bars = bars_from(&uptrend(600), 0.002);
-        let bt = run(&bars, &[], &params(Market::Spot)).unwrap();
+        let bt = run(&bars, &[], &[], &params(Market::Spot)).unwrap();
         let first = &bt.fills[0];
         // La première décision est prise à la clôture de la veille du début :
         // l'ordre part à l'ouverture de la première bougie du backtest.
@@ -945,7 +1100,7 @@ mod tests {
         let mut p = params(Market::Spot);
         p.target_vol_pct = 100.0; // pousse l'exposition vers le plafond
         p.max_leverage = 3.0;
-        let bt = run(&bars, &[], &p).unwrap();
+        let bt = run(&bars, &[], &[], &p).unwrap();
         assert!(bt.points.iter().all(|pt| pt.exposure <= 1.0 + 1e-9));
         assert!(bt.warnings.iter().any(|w| w.contains("Spot")));
     }
@@ -956,7 +1111,7 @@ mod tests {
             .map(|i| 100.0 + if i % 2 == 0 { 0.5 } else { -0.5 })
             .collect();
         let bars = bars_from(&closes, 0.0);
-        let bt = run(&bars, &[], &params(Market::Spot)).unwrap();
+        let bt = run(&bars, &[], &[], &params(Market::Spot)).unwrap();
         assert!(
             bt.fills.is_empty(),
             "aucune cassure : {:?}",
@@ -973,7 +1128,7 @@ mod tests {
         closes.push(top * 0.7);
         closes.extend((1..=20).map(|i| top * (0.7 + 0.005 * i as f64)));
         let bars = bars_from(&closes, 0.002);
-        let bt = run(&bars, &[], &params(Market::Spot)).unwrap();
+        let bt = run(&bars, &[], &[], &params(Market::Spot)).unwrap();
         let stop = bt
             .fills
             .iter()
@@ -998,7 +1153,7 @@ mod tests {
         closes.extend((1..=3).map(|i| top * (1.0 - 0.04 * i as f64)));
         closes.extend((1..=30).map(|i| top * 0.88 * 1.01f64.powi(i)));
         let bars = bars_from(&closes, 0.002);
-        let bt = run(&bars, &[], &params(Market::Spot)).unwrap();
+        let bt = run(&bars, &[], &[], &params(Market::Spot)).unwrap();
         let stop = bt
             .fills
             .iter()
@@ -1032,7 +1187,7 @@ mod tests {
         let bars = bars_from(&closes, 0.002);
         let mut p = params(Market::Perp);
         p.max_leverage = 2.0;
-        let bt = run(&bars, &[], &p).unwrap();
+        let bt = run(&bars, &[], &[], &p).unwrap();
         assert!(
             bt.points.iter().any(|pt| pt.exposure < 0.0),
             "position vendeuse"
@@ -1058,11 +1213,11 @@ mod tests {
                 })
             })
             .collect();
-        let bt = run(&bars, &funding, &p).unwrap();
+        let bt = run(&bars, &funding, &[], &p).unwrap();
         assert!(bt.funding > 0.0);
         assert_eq!(bt.funding_estimated_periods, 0);
         assert!(bt.funding_real_periods > 0);
-        let without = run(&bars, &[], &p).unwrap();
+        let without = run(&bars, &[], &[], &p).unwrap();
         assert_eq!(without.funding, 0.0, "funding supposé nul");
         assert!(bt.summary().strategy.final_equity < without.summary().strategy.final_equity);
     }
@@ -1078,12 +1233,12 @@ mod tests {
         let mut p = params(Market::Spot);
         p.target_vol_pct = 100.0; // position pleine : une baisse de plus de 3 % sur un jour suffit
         p.stop_atr_mult = 0.0; // sans stop, seul le coupe-circuit protège
-        let free = run(&bars, &[], &p).unwrap();
+        let free = run(&bars, &[], &[], &p).unwrap();
         assert!(free.events.iter().any(|e| e.kind == "Coupe-circuit"));
         assert!(!free.halted);
 
         p.halt_on_breach = true;
-        let halted = run(&bars, &[], &p).unwrap();
+        let halted = run(&bars, &[], &[], &p).unwrap();
         assert!(halted.halted);
         let event = halted
             .events
@@ -1107,14 +1262,14 @@ mod tests {
         let bars = bars_from(&uptrend(150), 0.002);
         let mut p = params(Market::Spot);
         p.start = d("2020-01-10");
-        let err = run(&bars, &[], &p).unwrap_err();
+        let err = run(&bars, &[], &[], &p).unwrap_err();
         assert!(err.contains("Historique insuffisant"), "{err}");
 
         // Début demandé avant le préchauffage : décalé, avec un avertissement.
         let bars = bars_from(&uptrend(600), 0.002);
         let mut p = params(Market::Spot);
         p.start = d("2020-01-15");
-        let bt = run(&bars, &[], &p).unwrap();
+        let bt = run(&bars, &[], &[], &p).unwrap();
         assert!(bt.warnings.iter().any(|w| w.contains("Début décalé")));
         assert!(bt.points[0].time >= bars[TrendVariant::Donchian.warmup_bars()].time);
     }
@@ -1170,12 +1325,257 @@ mod tests {
     #[test]
     fn csv_exports() {
         let bars = bars_from(&uptrend(600), 0.002);
-        let bt = run(&bars, &[], &params(Market::Spot)).unwrap();
+        let bt = run(&bars, &[], &[], &params(Market::Spot)).unwrap();
         let csv = bt.to_csv();
         assert!(csv.starts_with("Date,Close,Equity,Buy_Hold,"));
+        assert!(csv.lines().next().unwrap().ends_with(",Equity_BTC"));
+        let last = bt.points.last().unwrap();
+        assert!(csv
+            .trim_end()
+            .ends_with(&format!(",{:.8}", last.equity_btc)));
         assert_eq!(csv.lines().count(), bt.points.len() + 1);
         let fills = bt.fills_csv();
         assert_eq!(fills.lines().count(), bt.fills.len() + 1);
         assert!(fills.lines().nth(1).unwrap().contains(",Signal,Achat,"));
+    }
+
+    /// Hausse bruitée, puis `cycles` répétitions de : baisse de 1 % par jour
+    /// pendant 12 jours (−11,4 %), rebond de 1 % par jour pendant 6 jours
+    /// (+6,2 %) : le capital repasse sous −10 % à chaque cycle sans jamais
+    /// retrouver son plus haut. La variante « cassure » ne sort que sous la
+    /// moyenne 200 : la position reste ouverte pendant les baisses.
+    fn repeated_dips(cycles: usize) -> Vec<f64> {
+        let mut closes = uptrend(500);
+        for _ in 0..cycles {
+            for _ in 0..12 {
+                closes.push(closes.last().unwrap() * 0.99);
+            }
+            for _ in 0..6 {
+                closes.push(closes.last().unwrap() * 1.01);
+            }
+        }
+        closes
+    }
+
+    #[test]
+    fn drawdown_breaker_fires_once_per_episode() {
+        let bars = bars_from(&repeated_dips(3), 0.0);
+        let mut p = params(Market::Spot);
+        p.variant = TrendVariant::Breakout;
+        p.target_vol_pct = 100.0;
+        p.stop_atr_mult = 0.0;
+        let bt = run(&bars, &[], &[], &p).unwrap();
+        // Le scénario franchit −10 % plusieurs fois sans nouveau plus haut.
+        let mut crossings = 0;
+        let mut below = false;
+        let mut new_high_after_first = false;
+        let mut seen = false;
+        for pt in &bt.points {
+            if pt.drawdown_pct <= -10.0 {
+                if !below {
+                    crossings += 1;
+                    seen = true;
+                }
+                below = true;
+            } else {
+                below = false;
+            }
+            if seen && pt.drawdown_pct == 0.0 {
+                new_high_after_first = true;
+            }
+        }
+        assert!(
+            crossings >= 2,
+            "scénario inadapté : {crossings} franchissement(s)"
+        );
+        assert!(!new_high_after_first);
+        let drawdown_events = bt
+            .events
+            .iter()
+            .filter(|e| e.kind == "Coupe-circuit" && e.detail.starts_with("Baisse"))
+            .count();
+        assert_eq!(drawdown_events, 1, "un seul épisode : {:?}", bt.events);
+        assert_eq!(bt.summary().circuit_breakers, bt.events.len());
+    }
+
+    #[test]
+    fn drawdown_breaker_rearms_after_a_new_high() {
+        let mut closes = repeated_dips(2);
+        let top = closes.iter().cloned().fold(0.0, f64::max);
+        // Reprise au-dessus du plus haut, puis nouvelle série de baisses.
+        let from = *closes.last().unwrap();
+        closes.extend((1..=200).map(|i| from * (top * 1.3 / from).powf(i as f64 / 200.0)));
+        for _ in 0..12 {
+            closes.push(closes.last().unwrap() * 0.98);
+        }
+        let bars = bars_from(&closes, 0.0);
+        let mut p = params(Market::Spot);
+        p.variant = TrendVariant::Breakout;
+        p.target_vol_pct = 100.0;
+        p.stop_atr_mult = 0.0;
+        let bt = run(&bars, &[], &[], &p).unwrap();
+        let drawdown_events = bt
+            .events
+            .iter()
+            .filter(|e| e.detail.starts_with("Baisse"))
+            .count();
+        assert_eq!(drawdown_events, 2, "un par épisode : {:?}", bt.events);
+    }
+
+    #[test]
+    fn results_are_counted_in_btc() {
+        let bars = bars_from(&uptrend(600), 0.002);
+        let bt = run(&bars, &[], &[], &params(Market::Spot)).unwrap();
+        let first = &bt.points[0];
+        let entry = bars.iter().find(|b| b.time == first.time).unwrap().open;
+        // Référence « garder » : achat à l'ouverture, glissement et frais compris.
+        let hold = 10_000.0 / (entry * 1.0005 * 1.00075);
+        assert!((first.hold_btc - hold).abs() < 1e-12);
+        for pt in &bt.points {
+            assert_eq!(pt.btc_price, pt.close);
+            assert!((pt.equity_btc - pt.equity / pt.close).abs() < 1e-12);
+            // BTC testé : « garder » en BTC = Buy & Hold en USDT / cours.
+            assert!((pt.hold_btc * pt.close - pt.buy_hold).abs() < 1e-6);
+            assert_eq!(pt.hold_btc, first.hold_btc);
+        }
+        let b = bt.summary().btc;
+        let last = bt.points.last().unwrap();
+        assert_eq!(b.start, first.hold_btc);
+        assert_eq!(b.end, last.equity_btc);
+        assert!((b.multiplier - b.end / b.start).abs() < 1e-12);
+        assert!((b.gained - (b.end - b.start)).abs() < 1e-12);
+        assert!(b.max_drawdown_pct <= 0.0);
+        assert!(b.time_out_pct >= 0.0 && b.time_out_pct <= 100.0);
+        // La part hors BTC est celle des bougies sans position.
+        let flat = bt.points.iter().filter(|p| p.exposure == 0.0).count();
+        assert!((b.time_out_pct - flat as f64 / bt.points.len() as f64 * 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn staying_in_usdt_in_a_bull_market_loses_btc() {
+        // Marché plat : aucune position, le capital reste en USDT. Le cours du
+        // BTC double ensuite (autre actif testé) : le nombre de BTC est divisé.
+        let flat: Vec<f64> = (0..400)
+            .map(|i| 10.0 + if i % 2 == 0 { 0.05 } else { -0.05 })
+            .collect();
+        let bars = bars_from(&flat, 0.0);
+        let btc_closes: Vec<f64> = (0..400)
+            .map(|i| 20_000.0 * (1.0 + i as f64 / 399.0))
+            .collect();
+        let btc = bars_from(&btc_closes, 0.0);
+        let mut p = params(Market::Spot);
+        p.base = "ETH".into();
+        let bt = run(&bars, &[], &btc, &p).unwrap();
+        assert!(bt.fills.is_empty());
+        let b = bt.summary().btc;
+        assert!((b.time_out_pct - 100.0).abs() < 1e-9);
+        let last = bt.points.last().unwrap();
+        assert_eq!(last.btc_price, btc_closes[399]);
+        assert!((b.end - 10_000.0 / btc_closes[399]).abs() < 1e-12);
+        let first = &bt.points[0];
+        let btc_open = btc.iter().find(|x| x.time == first.time).unwrap().open;
+        let expected = btc_open * 1.0005 * 1.00075 / btc_closes[399];
+        assert!((b.multiplier - expected).abs() < 1e-9, "×{}", b.multiplier);
+        assert!(b.multiplier < 0.85);
+        assert!(b.gained < 0.0);
+        assert!(b.max_drawdown_pct < -15.0, "{}", b.max_drawdown_pct);
+        // Sans cours BTC, impossible de compter en BTC.
+        let err = run(&bars, &[], &[], &p).unwrap_err();
+        assert!(err.contains("BTC_USDT"), "{err}");
+    }
+
+    #[test]
+    fn short_periods_are_not_annualized() {
+        let bars = bars_from(&uptrend(600), 0.002);
+        let bt = run(&bars, &[], &[], &params(Market::Spot)).unwrap();
+        assert!(bt.too_short());
+        assert!(bt
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("Période trop courte pour juger une stratégie de tendance")));
+        let s = bt.summary();
+        assert!(!s.annualized);
+        assert_eq!(s.strategy.cagr_pct, None);
+        assert_eq!(s.buy_hold.cagr_pct, None);
+        assert_eq!(s.strategy.calmar, None);
+        assert!(
+            s.strategy.total_return_pct > 0.0,
+            "rendement total conservé"
+        );
+    }
+
+    #[test]
+    fn long_active_periods_are_annualized() {
+        // Cycles de 200 jours sur 4 ans : assez d'allers-retours.
+        let closes: Vec<f64> = (0..1500)
+            .map(|i| {
+                100.0
+                    * (0.9 * (i as f64 * std::f64::consts::TAU / 200.0).sin()).exp()
+                    * (1.0 + 0.004 * ((i % 5) as f64 - 2.0))
+            })
+            .collect();
+        let bars = bars_from(&closes, 0.002);
+        let mut p = params(Market::Spot);
+        p.start = d("2020-12-01");
+        p.stop_atr_mult = 0.0;
+        let bt = run(&bars, &[], &[], &p).unwrap();
+        assert!(bt.days() >= 365.0);
+        assert!(
+            bt.round_trips.len() >= 5,
+            "{} allers-retours",
+            bt.round_trips.len()
+        );
+        assert!(!bt.too_short());
+        assert!(!bt.warnings.iter().any(|w| w.contains("trop courte")));
+        let s = bt.summary();
+        assert!(s.annualized && s.strategy.cagr_pct.is_some());
+    }
+
+    #[test]
+    fn four_hour_candles_get_a_warning() {
+        let t0 = date_ms(d("2020-01-01"));
+        let bars: Vec<Bar> = (0..3000)
+            .map(|i| {
+                let c = 100.0 * 1.0004f64.powi(i) * (1.0 + 0.004 * ((i % 5) as f64 - 2.0));
+                Bar {
+                    time: t0 + i as i64 * 4 * 3_600_000,
+                    open: c,
+                    high: c * 1.001,
+                    low: c * 0.999,
+                    close: c,
+                    volume: 0.0,
+                }
+            })
+            .collect();
+        let mut p = params(Market::Spot);
+        p.interval = Interval::H4;
+        p.start = d("2020-03-01");
+        let bt = run(&bars, &[], &[], &p).unwrap();
+        assert!(bt.warnings.iter().any(|w| w.contains(
+            "Les réglages ont été validés en bougies journalières ; en 4 h, les moyennes ne couvrent que 3 à 33 jours."
+        )));
+        let daily = run(
+            &bars_from(&uptrend(600), 0.002),
+            &[],
+            &[],
+            &params(Market::Spot),
+        )
+        .unwrap();
+        assert!(!daily.warnings.iter().any(|w| w.contains("4 h")));
+    }
+
+    #[test]
+    fn breakout_variant_runs_long_only_on_the_perpetual() {
+        let mut closes = uptrend(500);
+        let top = closes[499];
+        closes.extend((1..=300).map(|i| top * 0.995f64.powi(i)));
+        let bars = bars_from(&closes, 0.002);
+        let mut p = params(Market::Perp);
+        p.variant = TrendVariant::Breakout;
+        p.max_leverage = 2.0;
+        let bt = run(&bars, &[], &[], &p).unwrap();
+        assert!(bt.points.iter().all(|pt| pt.exposure >= 0.0));
+        assert!(bt.fills.iter().any(|f| f.side == "Achat"));
+        assert_eq!(p.warmup_bars(), 201);
     }
 }

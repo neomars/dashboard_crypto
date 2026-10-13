@@ -22,8 +22,10 @@ const MAX_PAGES: usize = 200;
 type CacheEntry = (Instant, Arc<dyn Any + Send + Sync>);
 
 pub struct MarketFeed {
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
     cache: Mutex<HashMap<String, CacheEntry>>,
+    /// Requêtes récentes à l'API BGeometrics (limites du plan gratuit).
+    pub(crate) bgeometrics_calls: Mutex<crate::mvrv::RateGuard>,
 }
 
 impl Default for MarketFeed {
@@ -46,6 +48,7 @@ impl MarketFeed {
         Self {
             http,
             cache: Mutex::new(HashMap::new()),
+            bgeometrics_calls: Mutex::new(crate::mvrv::RateGuard::bgeometrics()),
         }
     }
 
@@ -59,19 +62,31 @@ impl MarketFeed {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<T, String>>,
     {
-        if let Some((at, value)) = self.cache.lock().unwrap().get(key) {
+        if let Some((at, value)) = self.cache_entry::<T>(key) {
             if at.elapsed() < CACHE_TTL {
-                if let Ok(v) = value.clone().downcast::<T>() {
-                    return Ok(v);
-                }
+                return Ok(value);
             }
         }
         let value = Arc::new(fetch().await?);
+        self.cache_put(key, value.clone());
+        Ok(value)
+    }
+
+    /// Entrée du cache et son âge, quelle que soit la durée de validité.
+    pub(crate) fn cache_entry<T: Send + Sync + 'static>(
+        &self,
+        key: &str,
+    ) -> Option<(Instant, Arc<T>)> {
+        let guard = self.cache.lock().unwrap();
+        let (at, value) = guard.get(key)?;
+        Some((*at, value.clone().downcast::<T>().ok()?))
+    }
+
+    pub(crate) fn cache_put<T: Send + Sync + 'static>(&self, key: &str, value: Arc<T>) {
         self.cache.lock().unwrap().insert(
             key.to_string(),
-            (Instant::now(), value.clone() as Arc<dyn Any + Send + Sync>),
+            (Instant::now(), value as Arc<dyn Any + Send + Sync>),
         );
-        Ok(value)
     }
 
     fn bars_key(inst: &Instrument, interval: Interval, from: NaiveDate) -> String {

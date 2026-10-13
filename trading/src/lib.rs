@@ -18,12 +18,14 @@
 //! L'exécution réelle des ordres (clés API Poloniex) n'est pas encore écrite :
 //! elle réutilisera les mêmes signaux et règles de risque.
 
+pub mod accumulation;
 pub mod backtest;
 pub mod catalog;
 pub mod chart;
 pub mod feed;
 pub mod market;
 pub mod metrics;
+pub mod mvrv;
 pub mod poloniex;
 pub mod risk;
 pub mod signals;

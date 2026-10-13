@@ -10,7 +10,7 @@ La barre de navigation latérale est divisée en trois sections : **Trading**, *
 
 ### Trading (moteur séparé)
 
-Le moteur de trading ([`trading/`](trading/)) est séparé des indicateurs de marché : il ne dépend pas de `core/`, ne lit pas leurs données et ne s'en sert pas pour décider. Il a ses propres données (bougies et funding de Poloniex, la plateforme d'exécution prévue), ses propres indicateurs de signal et ses propres règles de risque ; le tableau de bord ne fait qu'afficher ses résultats. Il ne passe encore aucun ordre réel (voir [Moteur de trading](#moteur-de-trading)).
+Le moteur de trading ([`trading/`](trading/)) est séparé des indicateurs de marché : il ne dépend pas de `core/`, ne lit pas leurs données et ne s'en sert pas pour décider. Il a ses propres données (bougies et funding de Poloniex, la plateforme d'exécution prévue), ses propres indicateurs de signal et ses propres règles de risque ; le tableau de bord ne fait qu'afficher ses résultats. Son objectif se mesure en **nombre de BTC**, pas en dollars : la référence est « garder ses BTC » (×1,00). Il ne passe encore aucun ordre réel (voir [Moteur de trading](#moteur-de-trading)).
 
 - **Signaux de tendance** : score de tendance (−1 à +1) et exposition cible que le moteur viserait à la dernière clôture, pour BTC, ETH, SOL et 8 autres cryptos, en spot ou en perpétuel USDT, sur bougies journalières ou de 4 heures.
 - **Backtest tendance** : rejoue le module tendance sur l'historique Poloniex, avec exécution à l'ouverture suivante, frais, glissement, funding, stop suiveur et coupe-circuits ; courbe de capital comparée au Buy & Hold, drawdown, exposition, journal des ordres et des événements de risque, export CSV.
@@ -331,6 +331,15 @@ API publique de Poloniex, sans clé ni compte ([`trading/src/poloniex.rs`](tradi
 | Bougies du perpétuel | `GET /v3/market/candles` (ex. `BTC_USDT_PERP`) | 500 bougies par requête ; historique vérifié depuis janvier 2023 |
 | Funding du perpétuel | `GET /v3/market/fundingRate/history` | un taux toutes les 8 h, 100 par requête, **180 derniers jours seulement** |
 
+Le module d'accumulation BTC utilise en plus le MVRV du bitcoin, dans deux sources publiques sans clé ([`trading/src/mvrv.rs`](trading/src/mvrv.rs)) :
+
+| Données | Source | Remarques |
+|---|---|---|
+| MVRV, historique | CSV public Coin Metrics `https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv`, colonnes `time` et `CapMVRVCur` lues par nom d'en-tête | environ 2,5 Mo, un point par jour depuis 2010 ; fichier mis à jour irrégulièrement (il s'arrêtait au 24/05/2026 lors de la vérification) |
+| MVRV, données récentes | API BGeometrics `GET https://bitcoin-data.com/v1/mvrv?startday=…&endday=…` | plan gratuit : 8 requêtes par heure, 15 par jour, 4 dernières années ; les 7 derniers jours sont réservés aux abonnés depuis septembre 2026 (changelog BGeometrics v1.7), donc les données gratuites ont environ une semaine de retard |
+
+Les deux séries sont raccordées : sur les dates communes, la valeur de BGeometrics (la plus récente) l'emporte, et l'écart entre les sources est contrôlé (avertissement au-delà de 2 % en moyenne ou 5 % au maximum). Les données sont gardées en mémoire 6 h (15 min si une source manque). Le moteur limite lui-même ses requêtes BGeometrics (4 par heure, 8 par jour) : le tableau de bord consomme le même quota pour ses propres métriques, via un code distinct. Le nom de l'endpoint et le format de sa réponse viennent de la documentation publique de BGeometrics ; ils n'ont pas pu être vérifiés sur le service lui-même pendant le développement, d'où une lecture tolérante de la réponse (tableau ou enveloppe `data`, date `d` ou `unixTs`, valeur `mvrv`).
+
 Les bougies sont chargées par fenêtres de 500, de la plus récente à la plus ancienne, et gardées 15 min en mémoire. La bougie en cours, pas encore close, est écartée : un signal n'est jamais calculé sur un cours provisoire.
 
 ### Module tendance
@@ -348,6 +357,11 @@ $$
 
 **Variante EMA.** $S = +1$ si l'EMA 20 dépasse l'EMA 100 et la clôture la SMA 200 ; $S = -1$ dans le cas inverse (perpétuel seulement) ; $S = 0$ sinon. Les EMA sont amorcées par la moyenne simple de leurs $n$ premières valeurs.
 
+**Variante « cassure 55 jours, sortie sous la moyenne 200 jours »** (`breakout`, celle du backtest par défaut). Acheteuse seulement, même sur le perpétuel, avec un score de 1 ou 0 :
+- **entrée** : la clôture égale ou dépasse la plus haute **clôture** des 55 bougies précédentes, **et** dépasse la moyenne simple 200 ;
+- **sortie** : la clôture passe sous la moyenne simple 200 ;
+- préchauffage : 201 bougies.
+
 ### Taille de position et risque
 
 Exposition cible, en fraction du capital (négative pour une vente) :
@@ -358,9 +372,9 @@ $$
 
 où $\sigma^{\ast}$ est la volatilité visée (25 % par an par défaut), $\hat\sigma_{30}$ la volatilité réalisée des rendements logarithmiques sur 30 jours (écart-type annualisé sur 365 jours), et $L_{\max}$ le levier maximal : 1 en spot, 2 par défaut en perpétuel, 5 au plus.
 
-- **Rééquilibrage par seuil** : la position n'est ajustée que si elle s'ouvre, se ferme, change de sens, dépasse le levier maximal, ou si l'exposition varie de plus de 20 % en relatif. Les petits ajustements coûteraient plus en frais qu'ils ne rapportent.
+- **Rééquilibrage par seuil** : la position n'est ajustée que si elle s'ouvre, se ferme, change de sens, dépasse le levier maximal de plus de 10 % (tolérance : à 2x, au-delà de 2,2x), ou si l'exposition varie de plus de 20 % en relatif. Les petits ajustements coûteraient plus en frais qu'ils ne rapportent ; sans la tolérance, une position à 2x revendait dans chaque creux, puisqu'une baisse la fait grossir.
 - **Stop suiveur** : à $3 \times \text{ATR}_{20}$ (lissage de Wilder) du meilleur cours atteint depuis l'entrée ; il ne recule jamais. Après un stop, pas de nouvelle entrée dans le même sens avant une clôture au-delà du meilleur cours d'avant le stop (la tendance reprend) ou un retour du score à 0.
-- **Coupe-circuits** : perte de 3 % sur une journée UTC, ou baisse de 10 % depuis le plus haut du capital. En backtest, ils sont signalés ; l'option « Arrêter au premier coupe-circuit » solde la position et arrête tout, comme le fera le moteur en réel (reprise manuelle).
+- **Coupe-circuits** : perte de 3 % sur une journée UTC, ou baisse de 10 % depuis le plus haut du capital. Celui de −10 % se déclenche une fois par épisode et ne se réarme qu'après un nouveau plus haut du capital (le compteur affiché est un nombre d'épisodes). En backtest, ils sont signalés ; l'option « Arrêter au premier coupe-circuit » solde la position et arrête tout, comme le fera le moteur en réel (reprise manuelle).
 - **Liquidation** (perpétuel) : si, au pire cours de la bougie, le capital tombe sous 0,5 % de la valeur de la position, celle-ci est liquidée et le backtest s'arrête.
 
 ### Backtest
@@ -378,13 +392,48 @@ Coûts :
 
 Le Buy & Hold de comparaison achète l'actif au premier cours d'ouverture, frais et glissement compris, et le garde.
 
+**Résultats en BTC (affichés en premier).** À chaque bougie, la valeur du portefeuille en BTC vaut le capital en USDT divisé par le cours de clôture de BTC_USDT (pour un autre actif que BTC, les bougies BTC_USDT du même intervalle sont chargées). La référence « garder ses BTC » achète des BTC au premier cours d'ouverture, frais et glissement compris, et les garde : multiplicateur ×1,00. Sont affichés : BTC au départ et à la fin, multiplicateur, BTC gagnés ou perdus, pire baisse du nombre de BTC (du plus haut au plus bas de la série en BTC) et part du temps hors BTC (bougies sans position, donc en USDT). Le graphique ajoute une ligne « Nombre de BTC » avec la référence « garder » en pointillés, et l'export CSV une colonne `Equity_BTC`. Les cartes en USDT viennent ensuite.
+
+**Valeurs par défaut de l'interface** : bougies 1 jour, spot, variante « cassure », levier 1 (y compris en passant au perpétuel), volatilité visée 100 %, stop 0. En bougies 4 h, un avertissement rappelle que les réglages ont été validés en bougies journalières (les moyennes ne couvrent plus que 3 à 33 jours).
+
+**Périodes courtes.** Sous 365 jours ou sous 5 allers-retours, le backtest avertit (« Période trop courte pour juger une stratégie de tendance ») et n'annualise pas : la carte affiche le rendement total, « non annualisé ».
+
 Mesures, sur 365 jours de cotation par an : rendement annualisé composé, volatilité, Sharpe (taux sans risque nul), Sortino, drawdown maximal, Calmar, temps investi, levier moyen, rotation annuelle, nombre d'allers-retours et part gagnante.
+
+### Accumulation BTC
+
+Page « 🪙 Accumulation BTC » ([`trading/src/accumulation.rs`](trading/src/accumulation.rs)). Elle achète du BTC au comptant à intervalle régulier, en plus grande quantité quand il est bon marché, et **ne vend jamais**.
+
+Paramètres : début, fin (incluse), montant de base par achat (USDT), fréquence (hebdomadaire avec choix du jour, mensuelle avec choix du jour du mois ; un mois plus court est acheté son dernier jour), mode de pondération, paliers modifiables, multiplicateur maximal (plafond de tous les poids), frais, glissement, stack de BTC initial (facultatif).
+
+Le montant d'un achat est $A = A_0 \times w$, où $w$ dépend du mode :
+
+| Mode | Poids $w$ |
+|---|---|
+| Fixe (référence) | 1 |
+| MVRV par paliers | selon le MVRV : ×3 sous 1, ×1,5 sous 2, ×1 sous 3, ×0,5 à partir de 3 (bornes et multiplicateurs modifiables) |
+| MVRV inverse | $1 / \text{MVRV}$ |
+| Prix / moyenne 200 jours | $\text{SMA}_{200} / \text{clôture}$, calculée sur les bougies Poloniex ; sert aussi de secours sans MVRV |
+
+Il n'y a pas de règle « tout ou rien » du type « acheter seulement si MVRV < 1 » : elle n'aurait rien acheté de 2023 à 2026, le MVRV n'étant descendu qu'à 1,15 au creux de 2026, et les sommets du MVRV baissent à chaque cycle (4,7 en 2017, 4,0 en 2021, 2,8 en 2024). Les paliers réduisent ou augmentent l'achat sans jamais l'interdire.
+
+**Chronologie, sans biais d'anticipation.** Pour un achat le jour $D$, le poids n'utilise que la dernière clôture journalière complète (celle de $D-1$) et le MVRV daté de $D-1$ au plus tard ; l'ordre est exécuté à l'ouverture de la bougie journalière du jour $D$, au prix glissé, les frais étant déduits du montant (BTC reçus $= A (1 - \text{frais}) / \text{prix}$). La bougie du jour n'étant pas close, un achat prévu après la dernière bougie complète n'est pas simulé (avertissement).
+
+**Fraîcheur du MVRV.** Si le MVRV le plus récent a plus de 3 jours, un avertissement s'affiche et les achats non couverts (aucun MVRV daté d'au plus 3 jours avant la veille) passent à la pondération prix / moyenne 200 jours. Avec l'offre gratuite de BGeometrics (7 derniers jours réservés aux abonnés), c'est le cas normal pour les derniers achats.
+
+**Résultats** :
+- USDT dépensés, BTC accumulés, coût moyen par BTC (frais et glissement compris) ;
+- **BTC en plus à budget égal** (chiffre principal) : écart avec un DCA fixe qui dépense exactement le même total, réparti en montants égaux aux mêmes dates, aux mêmes prix d'exécution ;
+- comparaison secondaire : DCA fixe au même montant de base, donc à budget total différent (une pondération qui dépense plus accumule plus sans être meilleure : seule la comparaison à budget égal isole l'apport de la pondération) ;
+- graphique en trois rangées : prix en échelle logarithmique avec les achats en marqueurs de taille proportionnelle au montant ; BTC accumulés (pondéré, fixe à budget égal, fixe au montant de base) ; poids de chaque achat et MVRV.
 
 ### Limites
 
 - Un backtest favorable n'est pas une preuve. Les paramètres par défaut sont choisis a priori, d'après la littérature sur le suivi de tendance, et non optimisés sur ces données ; validez-les sur une période non utilisée, puis en paper trading.
 - L'exécution réelle des ordres n'est pas encore écrite. Elle réutilisera les mêmes signaux et règles de risque, avec une clé API Poloniex limitée au trading (sans droit de retrait). Vérifiez d'abord que Poloniex peut vous servir dans votre pays (règlement européen MiCA).
 - Le funding de plus de 180 jours est supposé, et le perpétuel n'a pas d'historique vérifié avant 2023.
+- Le MVRV de Coin Metrics et celui de BGeometrics peuvent différer légèrement (calcul de la capitalisation réalisée) : l'écart est mesuré et signalé, pas corrigé.
+- L'accumulation pondérée suppose que le MVRV reste un bon indicateur de cycle ; ses sommets baissent à chaque cycle, ce qui est une raison de ne pas en faire une règle tout ou rien. Un résultat passé n'est pas une garantie.
 
 ## Installation
 
@@ -443,6 +492,7 @@ Toutes les données viennent d'API publiques et gratuites, **sans clé ni compte
 | [ism-feed](https://github.com/sofiaverma06/ism-feed) (GitHub) | ISM Manufacturing PMI mensuel : fichier intégré depuis 2013, complété par ce CSV public et par `config.ini` |
 | Strategy / [SEC EDGAR](https://www.sec.gov/edgar) | BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré, complété automatiquement par les 8-K, 10-Q et 10-K récents, et par `config.ini` |
 | [Poloniex](https://api-docs.poloniex.com) | section Trading uniquement : bougies spot et perpétuel, historique du funding (180 derniers jours) |
+| [Coin Metrics](https://github.com/coinmetrics/data) (GitHub) et BGeometrics | section Trading uniquement (Accumulation BTC) : MVRV historique (CSV public) et récent (API ; quota gratuit partagé avec le tableau de bord) |
 
 ### Limites de BGeometrics
 
@@ -482,7 +532,7 @@ cargo test --workspace   # tests (après un premier `npm run vendor`)
 
 Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Fear & Greed / SEC (liste des dépôts, nombre d'actions en page de couverture, BTC détenus dans les 8-K), le cache disque, le rapport PDF, et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
 
-Ceux du moteur de trading couvrent ses indicateurs (EMA, ATR, canaux, volatilité), les signaux de cassure, les règles de risque, le backtest (exécution à l'ouverture suivante, frais, spot sans emprunt, stop et reprise, funding réel ou supposé, coupe-circuits), les mesures de performance et le décodage des réponses Poloniex. `trading/tests/render_trading.rs` rejoue les deux pages Trading sur un marché synthétique, sans réseau ; avec `TRADING_SAMPLES_HTML=/tmp/trading.html`, il écrit aussi une page affichant leurs figures.
+Ceux du moteur de trading couvrent ses indicateurs (EMA, ATR, canaux, volatilité), les signaux de cassure, les règles de risque, le backtest (exécution à l'ouverture suivante, frais, spot sans emprunt, stop et reprise, funding réel ou supposé, coupe-circuits), les résultats en BTC, la variante cassure, les mesures de performance, le décodage des réponses Poloniex, la lecture et le raccordement du MVRV (Coin Metrics, BGeometrics, limiteur de requêtes) et l'accumulation (calendrier, paliers, chronologie sans biais d'anticipation, comparaisons à budget égal, secours sans MVRV). `trading/tests/render_trading.rs` rejoue les pages Trading sur un marché et un MVRV synthétiques, sans réseau ; avec `TRADING_SAMPLES_HTML=/tmp/trading.html`, il écrit aussi des pages affichant leurs figures (`/tmp/trading.html`, `/tmp/trading-accumulation.html`).
 
 ### Publier une version
 
@@ -505,10 +555,11 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
 - `trading/` : moteur de trading, sans dépendance vers `core/`.
   - `poloniex.rs`, `feed.rs` : API publique de Poloniex (bougies, funding) et cache mémoire.
   - `ta.rs` : indicateurs de signal (moyennes mobiles, ATR, plus hauts et plus bas, volatilité réalisée).
-  - `strategy.rs` : module tendance (ensemble Donchian, croisement EMA).
+  - `strategy.rs` : module tendance (ensemble Donchian, croisement EMA, cassure 55 j / moyenne 200 j).
   - `risk.rs` : cible de volatilité, plafond de levier, rééquilibrage, stop suiveur, coupe-circuits.
   - `backtest.rs`, `metrics.rs` : simulation barre par barre et mesures de performance.
   - `signals.rs` : signal à la dernière clôture.
+  - `accumulation.rs`, `mvrv.rs` : accumulation de BTC (achats pondérés, jamais de vente) et historique du MVRV (Coin Metrics + BGeometrics).
   - `chart.rs`, `tools.json` : figures et pages de la section Trading.
 - `src-tauri/` : application de bureau (commandes appelées par l'interface ; celles de la section Trading dans `src/trading.rs`) et configuration des paquets : `tauri.conf.json` commun, `tauri.linux.conf.json` (`.deb`), `tauri.windows.conf.json` (installateur NSIS).
 - `ui/` : interface (HTML/CSS/JavaScript, sans étape de compilation).

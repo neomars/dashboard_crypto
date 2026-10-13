@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Identifiants des pages servies par le moteur.
-pub const IDS: [&str; 2] = ["trend_signals", "trend_backtest"];
+pub const IDS: [&str; 3] = ["btc_accumulation", "trend_signals", "trend_backtest"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolMeta {

@@ -231,6 +231,7 @@ fn main() {
             trading::list_trading_tools,
             trading::trading_signals,
             trading::run_backtest,
+            trading::run_accumulation,
             trading::export_backtest
         ])
         .run(tauri::generate_context!())

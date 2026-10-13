@@ -124,6 +124,8 @@ input[type="range"] { accent-color: var(--accent); }
 
 .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 12px 0; }
 .metric { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+.metric.primary { border-color: var(--accent); }
+.metric.primary .value { color: var(--accent); }
 .metric .label { color: var(--muted); font-size: 13px; }
 .metric .value { font-size: 24px; font-weight: 600; }
 .metric .delta { font-size: 13px; }
@@ -159,3 +161,6 @@ th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background
 .muted { color: var(--muted); }
 a { color: var(--info-text); }
 code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+
+/* L'attribut hidden doit l'emporter sur les display: flex des champs et des groupes de contrôles. */
+[hidden] { display: none !important; }
