@@ -32,13 +32,25 @@ const SOURCES = [
   ["ISM PMI (ism-feed, GitHub)", "https://github.com/sofiaverma06/ism-feed", "ISM Manufacturing PMI mensuel : fichier intégré (2013 →), complété par ce CSV public et par config.ini (section [PMI])"],
   ["Strategy / SEC EDGAR", "https://www.sec.gov/edgar/browse/?CIK=1050446", "BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré, complété à chaque affichage par les dernières publications SEC (contact requis, voir plus bas) et par config.ini"],
   ["Poloniex", "https://api-docs.poloniex.com", "section Trading uniquement : bougies spot et perpétuel, historique du funding (180 derniers jours seulement)"],
+  ["Coin Metrics (GitHub)", "https://github.com/coinmetrics/data", "section Trading, Accumulation BTC : historique du MVRV du bitcoin (fichier CSV public, mis à jour irrégulièrement)"],
 ];
 
 // Section Trading : actifs disponibles en spot et en perpétuel USDT sur Poloniex.
 const TRADING_ASSETS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "LTC", "BNB", "ADA", "AVAX", "LINK", "TRX"];
 const MARKETS = [["spot", "Spot"], ["perp", "Perpétuel USDT"]];
 const INTERVALS = [["DAY_1", "1 jour"], ["HOUR_4", "4 heures"]];
-const VARIANTS = [["donchian", "Ensemble Donchian (20, 55, 100, 200)"], ["ema", "Croisement EMA 20/100 + filtre SMA 200"]];
+const VARIANTS = [
+  ["donchian", "Ensemble Donchian (20, 55, 100, 200)"],
+  ["ema", "Croisement EMA 20/100 + filtre SMA 200"],
+  ["breakout", "Cassure 55 j, sortie sous moyenne 200 j"],
+];
+const WEIGHTINGS = [
+  ["fixed", "Fixe (référence)"],
+  ["mvrv_tiers", "MVRV par paliers"],
+  ["mvrv_inverse", "MVRV inverse (1 / MVRV)"],
+  ["price_ma200", "Prix / moyenne 200 jours"],
+];
+const WEEKDAYS = [[1, "Lundi"], [2, "Mardi"], [3, "Mercredi"], [4, "Jeudi"], [5, "Vendredi"], [6, "Samedi"], [7, "Dimanche"]];
 
 const state = {
   indicators: [],
@@ -54,6 +66,7 @@ const state = {
   sim: null,
   signal: { base: "BTC", market: "spot", interval: "DAY_1", variant: "donchian" },
   bt: null,        // paramètres du backtest de la section Trading
+  acc: null,       // paramètres de l'accumulation BTC
   requestId: 0,
 };
 
@@ -94,10 +107,11 @@ function debounce(fn, ms) {
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
-function plot(container, figure, yScale) {
+// `axes` : axes verticaux qui suivent le choix d'échelle (le premier par défaut).
+function plot(container, figure, yScale, axes = ["yaxis"]) {
   const layout = { ...figure.layout, template: DARK_TEMPLATE, autosize: true };
-  if (yScale) layout.yaxis = { ...(layout.yaxis || {}), type: yScale };
-  const div = el("div", { class: "chart" });
+  if (yScale) for (const a of axes) layout[a] = { ...(layout[a] || {}), type: yScale };
+  const div = el("div", { class: "chart", "data-axes": axes.join(",") });
   container.append(div);
   Plotly.newPlot(div, figure.data, layout, PLOT_CONFIG);
   return div;
@@ -156,6 +170,7 @@ function render() {
   const ind = current();
   if (!ind) return renderHome();
   if (ind.id === "simulator") return renderSimulator(ind);
+  if (ind.id === "btc_accumulation") return renderAccumulation(ind);
   if (ind.id === "trend_signals") return renderTrendSignals(ind);
   if (ind.id === "trend_backtest") return renderBacktest(ind);
   return renderIndicator(ind);
@@ -177,7 +192,7 @@ async function renderHome() {
     el("strong", {}, `${i.icon} ${i.name}`), el("span", {}, i.description))));
   if (state.trading.length) {
     main.append(el("h3", {}, "Trading"),
-      el("p", { class: "muted" }, "Moteur de trading séparé : ses propres données (Poloniex), ses indicateurs de signal, ses règles de risque et son backtest. Aucun ordre réel n'est passé."),
+      el("p", { class: "muted" }, "Moteur de trading séparé : ses propres données (Poloniex, MVRV), ses indicateurs de signal, ses règles de risque, son backtest et son accumulation de BTC. L'objectif se mesure en nombre de BTC, pas en dollars. Aucun ordre réel n'est passé."),
       tools(state.trading));
   }
   main.append(el("h3", {}, "Indicateurs de marché et simulation"),
@@ -448,8 +463,13 @@ const fmtPct = (v, digits = 1) => (v == null ? "–" : `${fmtNumber(v, digits)} 
 const fmtRatio = (v) => (v == null ? "–" : fmtNumber(v, 2));
 const fmtExposure = (x) => `${x > 0 ? "+" : ""}${fmtNumber(x * 100, 0)} % du capital`;
 
-function metricCard(label, value, sub, delta) {
-  return el("div", { class: "metric" },
+// Nombre de BTC : 6 décimales sous 1 BTC, 4 au-delà.
+const fmtBtc = (v) => (v == null ? "–" : fmtNumber(v, Math.abs(v) < 1 ? 6 : 4));
+const fmtSignedBtc = (v) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${fmtBtc(Math.abs(v))}`);
+const fmtSignedPct = (v, digits = 1) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${fmtNumber(Math.abs(v), digits)} %`);
+
+function metricCard(label, value, sub, delta, primary) {
+  return el("div", { class: primary ? "metric primary" : "metric" },
     el("div", { class: "label" }, label), el("div", { class: "value" }, value),
     delta != null && el("div", { class: `delta ${delta >= 0 ? "up" : "down"}` }, `${delta >= 0 ? "▲" : "▼"} ${fmtNumber(delta)} %`),
     sub && el("div", { class: "sub" }, sub));
@@ -515,9 +535,10 @@ async function loadTrendSignals(ind, box) {
 
 function renderBacktest(ind) {
   const p = state.bt || (state.bt = {
-    base: "BTC", market: "spot", interval: "DAY_1", variant: "donchian",
+    // Réglages validés en bougies journalières, au comptant, sans levier ni stop.
+    base: "BTC", market: "spot", interval: "DAY_1", variant: "breakout",
     start: "2018-01-01", end: today(), initial_capital: 10000,
-    target_vol_pct: 25, max_leverage: 1, stop_atr_mult: 3,
+    target_vol_pct: 100, max_leverage: 1, stop_atr_mult: 0,
     fee_pct: 0.075, slippage_pct: 0.05, rebalance_pct: 20, funding_pct_8h: 0.01,
     halt_on_breach: false,
   });
@@ -527,10 +548,10 @@ function renderBacktest(ind) {
   const input = (key, type, attrs = {}) => el("input", { type, value: p[key], ...attrs,
     onchange: (e) => { p[key] = type === "number" ? Number(e.target.value) : e.target.value; run(); } });
   const leverage = input("max_leverage", "number", { step: 0.5, min: 0.5, max: 5 });
-  // Levier par défaut du marché choisi : 1x en spot (pas d'emprunt), 2x en perpétuel.
+  // Levier 1 par défaut, y compris en perpétuel : le levier se choisit à la main.
   const onChange = (key) => {
     if (key === "market") {
-      p.max_leverage = p.market === "perp" ? 2 : 1;
+      p.max_leverage = 1;
       leverage.value = p.max_leverage;
     }
     run();
@@ -584,9 +605,20 @@ async function runBacktest(ind, box) {
   box.replaceChildren();
   res.warnings.forEach((w) => box.append(notice("warning", w)));
   if (s.liquidated) box.append(notice("error", "💀 Position liquidée : le capital ne couvrait plus la marge de maintenance. Le backtest s'arrête à cette date."));
-  box.append(el("div", { class: "metrics" },
+  const btc = s.btc;
+  // Le nombre de BTC d'abord : c'est la mesure de réussite. Référence : garder ses BTC (×1,00).
+  box.append(el("h2", {}, "🪙 En nombre de BTC"), el("div", { class: "metrics" },
+    metricCard("BTC à la fin", `${fmtBtc(btc.end)} BTC`, `Garder ses BTC : ${fmtBtc(btc.start)} BTC`, (btc.multiplier - 1) * 100, true),
+    metricCard("Multiplicateur vs garder", `×${fmtNumber(btc.multiplier, 2)}`, "Garder ses BTC = ×1,00", null, true),
+    metricCard("BTC gagnés ou perdus", `${fmtSignedBtc(btc.gained)} BTC`, `Du ${s.first_date} au ${s.last_date}`, null, true),
+    metricCard("Pire baisse du nombre de BTC", fmtPct(btc.max_drawdown_pct), "Du plus haut au plus bas de la série en BTC"),
+    metricCard("Temps hors BTC (en USDT)", fmtPct(btc.time_out_pct, 0), "Part des bougies sans aucune position")));
+  const total = s.annualized
+    ? metricCard("Rendement annualisé", fmtPct(st.cagr_pct), `Buy & Hold : ${fmtPct(bh.cagr_pct)}`)
+    : metricCard("Rendement total (non annualisé)", fmtPct(st.total_return_pct), `Buy & Hold : ${fmtPct(bh.total_return_pct)} · période trop courte pour annualiser`);
+  box.append(el("h2", {}, "💵 En USDT"), el("div", { class: "metrics" },
     metricCard("Capital final (USDT)", fmtNumber(st.final_equity), `Du ${s.first_date} au ${s.last_date}`, st.total_return_pct),
-    metricCard("Rendement annualisé", fmtPct(st.cagr_pct), `Buy & Hold : ${fmtPct(bh.cagr_pct)}`),
+    total,
     metricCard("Drawdown maximal", fmtPct(st.max_drawdown_pct), `Buy & Hold : ${fmtPct(bh.max_drawdown_pct)}`),
     metricCard("Sharpe", fmtRatio(st.sharpe), `Buy & Hold : ${fmtRatio(bh.sharpe)} · Sortino : ${fmtRatio(st.sortino)}`),
     metricCard("Ordres", String(s.fills), `${s.round_trips} allers-retours, ${s.win_rate_pct == null ? "–" : fmtPct(s.win_rate_pct, 0)} gagnants, ${s.stops} stops`),
@@ -596,9 +628,9 @@ async function runBacktest(ind, box) {
     box.append(notice("info", `Funding : réel sur ${s.funding_real_periods} paiements (180 derniers jours), supposé à ${fmtNumber(p.funding_pct_8h, 3)} % par 8 h sur ${s.funding_estimated_periods} paiements. Montant négatif : funding reçu.`));
   }
   if (s.circuit_breakers) {
-    box.append(notice("warning", `Coupe-circuit déclenché ${s.circuit_breakers} fois.${s.halted ? " Le backtest s'est arrêté au premier, comme le moteur en réel." : " Cochez « Arrêter au premier coupe-circuit » pour voir l'effet de l'arrêt."}`));
+    box.append(notice("warning", `Coupe-circuit : ${s.circuit_breakers} épisode${s.circuit_breakers > 1 ? "s" : ""} (la baisse de 10 % depuis le plus haut ne se redéclenche qu'après un nouveau plus haut du capital).${s.halted ? " Le backtest s'est arrêté au premier, comme le moteur en réel." : " Cochez « Arrêter au premier coupe-circuit » pour voir l'effet de l'arrêt."}`));
   }
-  plot(box, res.chart, scaleFor(ind));
+  plot(box, res.chart, scaleFor(ind), ["yaxis", "yaxis2"]);
   if (ind.interpretation) box.append(notice("info", `💡 ${ind.interpretation}`));
 
   const table = (headers, rows) => el("div", { class: "table-wrap" }, el("table", {},
@@ -623,8 +655,123 @@ async function runBacktest(ind, box) {
     } catch (e) { status.replaceChildren(notice("error", String(e))); }
   };
   box.append(el("h2", {}, "📥 Exporter les résultats"), el("div", { class: "row" },
-    el("button", { class: "btn", type: "button", onclick: () => exportAs("equity") }, "Courbe de capital (CSV)"),
+    el("button", { class: "btn", type: "button", onclick: () => exportAs("equity") }, "Courbe de capital et en BTC (CSV)"),
     el("button", { class: "btn", type: "button", onclick: () => exportAs("fills") }, "Journal des ordres (CSV)")), status);
+}
+
+// ---------- Accumulation BTC (achats au comptant, jamais de vente) ----------
+
+function renderAccumulation(ind) {
+  const p = state.acc || (state.acc = {
+    start: "2018-01-01", end: today(), base_amount: 100,
+    frequency: "weekly", weekday: 1, month_day: 1,
+    weighting: "mvrv_tiers",
+    tier_bounds: [1, 2, 3], tier_multipliers: [3, 1.5, 1, 0.5], max_multiplier: 3,
+    fee_pct: 0.075, slippage_pct: 0.05, initial_btc: 0,
+  });
+  const results = el("div");
+  const run = debounce(() => runAccumulation(ind, results), 400);
+  const field = (label, input) => el("label", { class: "field" }, el("span", {}, label), input);
+  const num = (key, attrs = {}) => el("input", { type: "number", value: p[key], ...attrs,
+    onchange: (e) => { p[key] = Number(e.target.value); run(); } });
+  const date = (key) => el("input", { type: "date", value: p[key], onchange: (e) => { p[key] = e.target.value; run(); } });
+  const select = (key, options, after) => el("select", { onchange: (e) => {
+    p[key] = typeof p[key] === "number" ? Number(e.target.value) : e.target.value;
+    if (after) after();
+    run();
+  } }, options.map(([value, label]) => el("option", { value, selected: value === p[key] }, label)));
+
+  // Les champs qui ne concernent pas le choix courant sont masqués.
+  const weekdayField = field("Jour de la semaine", select("weekday", WEEKDAYS));
+  const monthField = field("Jour du mois (31 : dernier jour)", num("month_day", { step: 1, min: 1, max: 31 }));
+  const tiersBox = el("div", { class: "controls" });
+  const sync = () => {
+    weekdayField.hidden = p.frequency !== "weekly";
+    monthField.hidden = p.frequency !== "monthly";
+    tiersBox.hidden = p.weighting !== "mvrv_tiers";
+  };
+  const tierField = (label, arr, i, attrs) => field(label, el("input", { type: "number", value: arr[i], ...attrs,
+    onchange: (e) => { arr[i] = Number(e.target.value); run(); } }));
+  tiersBox.append(
+    ...p.tier_bounds.map((_, i) => tierField(`Palier ${i + 1} : MVRV <`, p.tier_bounds, i, { step: 0.1, min: 0.1 })),
+    ...p.tier_multipliers.map((_, i) => tierField(
+      i < p.tier_bounds.length ? `Multiplicateur du palier ${i + 1}` : `Multiplicateur à partir du palier ${p.tier_bounds.length}`,
+      p.tier_multipliers, i, { step: 0.1, min: 0, max: 100 })));
+
+  main.replaceChildren(
+    el("h1", {}, `${ind.icon} ${ind.name}`),
+    el("p", { class: "muted" }, ind.description),
+    el("div", { class: "controls" },
+      field("Début", date("start")),
+      field("Fin (incluse)", date("end")),
+      field("Montant de base par achat (USDT)", num("base_amount", { step: 10, min: 1 })),
+      field("Fréquence", select("frequency", [["weekly", "Hebdomadaire"], ["monthly", "Mensuelle"]], sync)),
+      weekdayField, monthField),
+    el("div", { class: "controls" },
+      field("Pondération", select("weighting", WEIGHTINGS, sync)),
+      field("Multiplicateur maximal (×)", num("max_multiplier", { step: 0.5, min: 1, max: 100 })),
+      field("Frais par ordre (%)", num("fee_pct", { step: 0.005, min: 0, max: 1 })),
+      field("Glissement (%)", num("slippage_pct", { step: 0.01, min: 0, max: 1 })),
+      field("Stack de BTC initial (facultatif)", num("initial_btc", { step: 0.01, min: 0 }))),
+    tiersBox,
+    el("p", { class: "muted" }, "Le poids d'un achat utilise la dernière clôture journalière complète et le MVRV daté de la veille au plus tard ; l'ordre est exécuté à l'ouverture du jour, au prix glissé, frais déduits du montant. Le module ne vend jamais. Pas de règle « tout ou rien » : un MVRV élevé réduit l'achat sans l'annuler."),
+    results,
+  );
+  sync();
+  runAccumulation(ind, results);
+}
+
+async function runAccumulation(ind, box) {
+  const id = ++state.requestId;
+  const p = state.acc;
+  if (p.start > p.end) {
+    box.replaceChildren(notice("error", "La date de début ne peut pas suivre la date de fin."));
+    return;
+  }
+  box.replaceChildren(loading("Simulation en cours (bougies Poloniex et MVRV)…"));
+  let res;
+  try {
+    res = await invoke("run_accumulation", { params: p });
+  } catch (e) {
+    if (id === state.requestId) box.replaceChildren(notice("error", String(e)));
+    return;
+  }
+  if (id !== state.requestId) return;
+
+  const s = res.summary;
+  const eb = s.equal_budget;
+  const fb = s.fixed_base;
+  box.replaceChildren();
+  res.warnings.forEach((w) => box.append(notice("warning", w)));
+  // Chiffre principal : BTC en plus face à un DCA fixe qui dépense exactement le même total.
+  box.append(el("div", { class: "metrics" },
+    metricCard("BTC en plus à budget égal", `${fmtSignedBtc(eb.extra_btc)} BTC`,
+      `Face à un DCA fixe de ${fmtNumber(eb.spent, 0)} USDT en montants égaux, aux mêmes dates (${fmtBtc(eb.btc)} BTC)`,
+      eb.extra_pct, true),
+    metricCard("USDT dépensés", fmtNumber(s.spent, 0), `${s.purchases} achats du ${s.first_date} au ${s.last_date} · poids moyen ×${fmtNumber(s.avg_weight, 2)}, maximal ×${fmtNumber(s.max_weight, 2)}`),
+    metricCard("BTC accumulés", `${fmtBtc(s.btc_bought)} BTC`,
+      s.initial_btc > 0 ? `Stack final avec les ${fmtBtc(s.initial_btc)} BTC de départ : ${fmtBtc(s.btc_total)} BTC` : `Valeur à la dernière clôture : ${fmtNumber(s.value_usdt, 0)} USDT`),
+    metricCard("Coût moyen par BTC", s.avg_cost == null ? "–" : `${fmtNumber(s.avg_cost, 0)} USDT`,
+      `DCA fixe, même budget : ${eb.avg_cost == null ? "–" : fmtNumber(eb.avg_cost, 0)} USDT`)));
+  box.append(el("div", { class: "metrics" },
+    metricCard("Face à un DCA fixe au même montant de base", `${fmtSignedBtc(fb.extra_btc)} BTC`,
+      `Budget total différent : ${fmtNumber(fb.spent, 0)} USDT dépensés par la référence, contre ${fmtNumber(s.spent, 0)} USDT ici (${fmtSignedPct(fb.extra_pct)} de BTC)`),
+    metricCard("Frais payés", `${fmtNumber(s.fees)} USDT`, s.skipped ? `${s.skipped} achats prévus non simulés` : null),
+    s.fallback_purchases > 0 && metricCard("Achats en secours", String(s.fallback_purchases), "Pondérés par prix / moyenne 200 j faute de MVRV récent")));
+  plot(box, res.chart, scaleFor(ind));
+  if (ind.interpretation) box.append(notice("info", `💡 ${ind.interpretation}`));
+
+  if (res.mvrv) {
+    const m = res.mvrv;
+    box.append(el("p", { class: "muted" },
+      `MVRV : Coin Metrics jusqu'au ${m.coinmetrics_last ?? "–"}, BGeometrics jusqu'au ${m.bgeometrics_last ?? "–"} (la plus récente l'emporte sur les dates communes). `,
+      m.overlap_days > 0 ? `Contrôle sur ${m.overlap_days} jours communs : écart moyen ${fmtPct(m.mean_gap_pct)}, maximal ${fmtPct(m.max_gap_pct)}.` : "Aucune date commune pour contrôler l'écart."));
+  }
+  box.append(el("h2", {}, "🧾 Journal des achats"), el("div", { class: "table-wrap" }, el("table", {},
+    el("thead", {}, el("tr", {}, ["Date", "Poids", "Origine", "MVRV", "Prix / moy. 200 j", "Montant (USDT)", "Prix d'exécution", "BTC reçus"].map((h) => el("th", {}, h)))),
+    el("tbody", {}, res.purchases.map((b) => el("tr", {},
+      [b.date, `×${fmtNumber(b.weight, 2)}`, b.source, b.mvrv == null ? "–" : fmtNumber(b.mvrv, 2),
+        b.ma_ratio == null ? "–" : fmtNumber(b.ma_ratio, 2), fmtNumber(b.amount), fmtSig(b.price), fmtBtc(b.btc)].map((c) => el("td", {}, c))))))));
 }
 
 // ---------- Démarrage ----------
@@ -633,7 +780,10 @@ document.querySelectorAll("#scale input").forEach((radio) => radio.addEventListe
   const ind = current();
   if (!ind) return;
   state.scale[ind.id] = radio.value;
-  main.querySelectorAll(".chart").forEach((div) => Plotly.relayout(div, { "yaxis.type": radio.value }));
+  main.querySelectorAll(".chart").forEach((div) => {
+    const axes = (div.dataset.axes || "yaxis").split(",");
+    Plotly.relayout(div, Object.fromEntries(axes.map((a) => [`${a}.type`, radio.value])));
+  });
 }));
 
 (async () => {

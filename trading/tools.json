@@ -1,18 +1,26 @@
 [
     {
+        "id": "btc_accumulation",
+        "name": "Accumulation BTC",
+        "icon": "🪙",
+        "description": "Achats de BTC au comptant à intervalle régulier, en plus grande quantité quand le bitcoin est bon marché (MVRV, prix / moyenne 200 jours). Le module ne vend jamais : il compte le BTC en plus par rapport à un achat régulier du même budget.",
+        "default_scale": "logarithmique",
+        "interpretation": "Le chiffre à regarder est « BTC en plus à budget égal » : un DCA fixe dépensant exactement le même total, en montants égaux aux mêmes dates. Une pondération qui dépense plus qu'un DCA fixe de même montant de base n'est pas meilleure pour autant : comparez toujours à budget égal. Aucune règle « tout ou rien » : le MVRV est descendu à 1,15 seulement au creux de 2026 et ses sommets baissent à chaque cycle (4,7 en 2017, 4,0 en 2021, 2,8 en 2024). Un résultat passé n'est pas une garantie ; aucun ordre n'est passé."
+    },
+    {
         "id": "trend_signals",
         "name": "Signaux de tendance",
         "icon": "🧭",
         "description": "Ce que le moteur de trading viserait à la dernière clôture : score de tendance (−1 à +1) et exposition cible, calculés sur les bougies Poloniex.",
         "default_scale": "logarithmique",
-        "interpretation": "Score +1 : les quatre cassures de Donchian (20, 55, 100 et 200 bougies) sont acheteuses ; 0 : pas de tendance ; −1 : vendeuses (perpétuel uniquement). L'exposition cible ramène la position à 25 % de volatilité annualisée, plafonnée à 1x en spot et 2x en perpétuel. Ces signaux ne passent aucun ordre."
+        "interpretation": "Score +1 : les quatre cassures de Donchian (20, 55, 100 et 200 bougies) sont acheteuses ; 0 : pas de tendance ; −1 : vendeuses (perpétuel uniquement). L'exposition cible ramène la position à 25 % de volatilité annualisée, plafonnée à 1x en spot et 2x en perpétuel. Variante « cassure » : 1 (acheteur) quand la clôture égale ou dépasse la plus haute clôture des 55 bougies précédentes et dépasse la moyenne 200, jusqu'à une clôture sous la moyenne 200 ; 0 sinon (acheteuse seulement, même sur le perpétuel). Ces signaux ne passent aucun ordre."
     },
     {
         "id": "trend_backtest",
         "name": "Backtest tendance",
         "icon": "🧪",
-        "description": "Rejoue le module tendance sur l'historique Poloniex : exécution à l'ouverture suivante, frais, glissement, funding, stop suiveur et coupe-circuits compris.",
+        "description": "Rejoue le module tendance sur l'historique Poloniex et compte le résultat en nombre de BTC, face à « garder ses BTC » : exécution à l'ouverture suivante, frais, glissement, funding, stop suiveur et coupe-circuits compris.",
         "default_scale": "logarithmique",
-        "interpretation": "Comparez au Buy & Hold le drawdown maximal autant que la performance : le suivi de tendance vise d'abord à éviter les grosses baisses. Un backtest favorable n'est pas une preuve : validez sur une période non utilisée pour régler les paramètres, puis en paper trading, avant d'engager de l'argent réel."
+        "interpretation": "La référence est « garder ses BTC » (×1,00) : le nombre de BTC à la fin, et non le solde en dollars, dit si la stratégie vous a fait gagner des BTC. Regardez aussi la pire baisse du nombre de BTC et le temps passé hors BTC. Sur moins d'un an ou moins de 5 allers-retours, rien n'est annualisé et le résultat ne prouve rien. Un backtest favorable n'est pas une preuve : validez sur une période non utilisée pour régler les paramètres, puis en paper trading, avant d'engager de l'argent réel."
     }
 ]

@@ -9,6 +9,10 @@
 //!   vente à découvert, sur le perpétuel seulement).
 //! - Variante « EMA » : +1 si EMA 20 > EMA 100 et clôture > SMA 200 ; −1 dans
 //!   le cas inverse (perpétuel seulement) ; 0 sinon.
+//! - Variante « Cassure » : acheteuse uniquement, même sur le perpétuel. Entrée
+//!   quand la clôture égale ou dépasse la plus haute clôture des 55 bougies
+//!   précédentes et dépasse la SMA 200 ; sortie dès que la clôture passe sous la
+//!   SMA 200. Score 1 ou 0.
 
 use crate::market::Bar;
 use crate::ta::{ema, highest, lowest, previous, sma};
@@ -19,12 +23,16 @@ pub const DONCHIAN_LOOKBACKS: [usize; 4] = [20, 55, 100, 200];
 pub const EMA_FAST: usize = 20;
 pub const EMA_SLOW: usize = 100;
 pub const SMA_FILTER: usize = 200;
+/// Cassure : nombre de clôtures précédentes dont on dépasse la plus haute.
+pub const BREAKOUT_LOOKBACK: usize = 55;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrendVariant {
     Donchian,
     Ema,
+    /// Cassure 55 bougies, sortie sous la moyenne 200 (acheteuse seulement).
+    Breakout,
 }
 
 impl TrendVariant {
@@ -32,6 +40,7 @@ impl TrendVariant {
         match self {
             TrendVariant::Donchian => "Ensemble Donchian (20, 55, 100, 200)",
             TrendVariant::Ema => "Croisement EMA 20/100 + filtre SMA 200",
+            TrendVariant::Breakout => "Cassure 55 j, sortie sous moyenne 200 j",
         }
     }
 
@@ -40,6 +49,7 @@ impl TrendVariant {
         match self {
             TrendVariant::Donchian => DONCHIAN_LOOKBACKS[3] + 1,
             TrendVariant::Ema => SMA_FILTER,
+            TrendVariant::Breakout => SMA_FILTER + 1,
         }
     }
 }
@@ -89,6 +99,34 @@ pub fn donchian_states(bars: &[Bar], lookback: usize, allow_short: bool) -> Vec<
         .collect()
 }
 
+/// Score 1 ou 0 de la variante « cassure » : la position est ouverte tant que la
+/// clôture reste au moins à la SMA 200. Pas de score avant `SMA_FILTER + 1`
+/// bougies.
+pub fn breakout_states(bars: &[Bar]) -> Vec<Option<f64>> {
+    let closes: Vec<f64> = bars.iter().map(|b| b.close).collect();
+    // Plus haute clôture des bougies précédentes : la clôture courante n'y entre pas.
+    let high = previous(&highest(&closes, BREAKOUT_LOOKBACK));
+    let filter = sma(&closes, SMA_FILTER);
+    let mut long = false;
+    (0..closes.len())
+        .map(|i| {
+            let (Some(h), Some(m)) = (high[i], filter[i]) else {
+                return None;
+            };
+            if i < SMA_FILTER {
+                return None;
+            }
+            let close = closes[i];
+            if long {
+                long = close >= m;
+            } else {
+                long = close >= h && close > m;
+            }
+            Some(if long { 1.0 } else { 0.0 })
+        })
+        .collect()
+}
+
 /// Score de tendance de la variante choisie.
 pub fn trend_signal(bars: &[Bar], variant: TrendVariant, allow_short: bool) -> TrendSignal {
     match variant {
@@ -105,6 +143,10 @@ pub fn trend_signal(bars: &[Bar], variant: TrendVariant, allow_short: bool) -> T
                 .collect();
             TrendSignal { score, components }
         }
+        TrendVariant::Breakout => TrendSignal {
+            score: breakout_states(bars),
+            components: Vec::new(),
+        },
         TrendVariant::Ema => {
             let closes: Vec<f64> = bars.iter().map(|b| b.close).collect();
             let (fast, slow, filter) = (
@@ -230,5 +272,78 @@ mod tests {
         assert_eq!(*long_only.score.last().unwrap(), Some(0.0));
         let with_short = trend_signal(&bars(&down), TrendVariant::Ema, true);
         assert_eq!(*with_short.score.last().unwrap(), Some(-1.0));
+    }
+
+    /// 230 clôtures plates à 100, puis `tail`.
+    fn flat_then(tail: &[f64]) -> Vec<Bar> {
+        let mut closes = vec![100.0; 230];
+        closes.extend_from_slice(tail);
+        bars(&closes)
+    }
+
+    #[test]
+    fn breakout_enters_holds_and_exits_below_the_200_average() {
+        let sig = trend_signal(
+            &flat_then(&[101.0, 103.0, 100.6, 99.0, 99.5, 103.0]),
+            TrendVariant::Breakout,
+            false,
+        );
+        let s = &sig.score;
+        assert!(s[199].is_none(), "201 bougies de préchauffage");
+        assert_eq!(s[200], Some(0.0));
+        assert_eq!(
+            s[229],
+            Some(0.0),
+            "clôture égale au plus haut précédent mais pas au-dessus de la moyenne 200"
+        );
+        assert_eq!(
+            s[230],
+            Some(1.0),
+            "101 > plus haute clôture (100) et > SMA 200"
+        );
+        assert_eq!(s[231], Some(1.0));
+        assert_eq!(
+            s[232],
+            Some(1.0),
+            "100,6 est sous la cassure mais au-dessus de la moyenne : on garde"
+        );
+        assert_eq!(s[233], Some(0.0), "99 < moyenne 200 : sortie");
+        assert_eq!(s[234], Some(0.0), "pas de cassure : reste à plat");
+        assert_eq!(
+            s[235],
+            Some(1.0),
+            "103 égale la plus haute clôture des 55 précédentes (≥) et dépasse la moyenne"
+        );
+    }
+
+    #[test]
+    fn breakout_does_not_enter_below_the_200_average() {
+        // 200 clôtures à 200, effondrement à 100 pendant 60 bougies, puis un
+        // sommet à 101 : plus haute clôture des 55 précédentes, mais très loin
+        // sous la moyenne 200 (environ 170).
+        let mut closes = vec![200.0; 200];
+        closes.extend(vec![100.0; 60]);
+        closes.push(101.0);
+        let sig = trend_signal(&bars(&closes), TrendVariant::Breakout, false);
+        assert_eq!(sig.score[260], Some(0.0));
+        assert!(sig.score.iter().flatten().all(|&x| x == 0.0 || x == 1.0));
+        assert_eq!(sig.score[200..].iter().flatten().sum::<f64>(), 0.0);
+    }
+
+    #[test]
+    fn breakout_is_long_only_even_on_the_perpetual() {
+        let down: Vec<f64> = (0..300).map(|i| 200.0 * 0.995f64.powi(i)).collect();
+        let sig = trend_signal(&bars(&down), TrendVariant::Breakout, true);
+        assert!(sig.score.iter().flatten().all(|&x| x == 0.0));
+        assert!(sig.components.is_empty());
+        assert_eq!(TrendVariant::Breakout.warmup_bars(), 201);
+        assert_eq!(
+            TrendVariant::Breakout.label(),
+            "Cassure 55 j, sortie sous moyenne 200 j"
+        );
+        assert_eq!(
+            serde_json::to_string(&TrendVariant::Breakout).unwrap(),
+            "\"breakout\""
+        );
     }
 }
