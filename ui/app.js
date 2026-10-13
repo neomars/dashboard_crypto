@@ -31,7 +31,7 @@ const SOURCES = [
   ["Bitcoin-Dataset (GitHub)", "https://github.com/Yrzxiong/Bitcoin-Dataset", "historique du prix BTC 2010-2018"],
   ["ISM PMI (ism-feed, GitHub)", "https://github.com/sofiaverma06/ism-feed", "ISM Manufacturing PMI mensuel : fichier intégré (2013 →), complété par ce CSV public et par config.ini (section [PMI])"],
   ["Strategy / SEC EDGAR", "https://www.sec.gov/edgar/browse/?CIK=1050446", "BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré, complété à chaque affichage par les dernières publications SEC (contact requis, voir plus bas) et par config.ini"],
-  ["Poloniex", "https://api-docs.poloniex.com", "section Trading uniquement : bougies spot et perpétuel, historique du funding (180 derniers jours seulement)"],
+  ["Poloniex", "https://api-docs.poloniex.com", "section Trading uniquement : bougies spot et perpétuel, historique du funding (180 derniers jours seulement) ; page Fibonacci à levier : bougies 1 minute (gardées sur disque), fiche du contrat, prix de marque si disponible"],
   ["Coin Metrics (GitHub)", "https://github.com/coinmetrics/data", "section Trading, Accumulation BTC : historique du MVRV du bitcoin (fichier CSV public, mis à jour irrégulièrement)"],
 ];
 
@@ -66,6 +66,7 @@ const state = {
   sim: null,
   signal: { base: "BTC", market: "spot", interval: "DAY_1", variant: "donchian" },
   bt: null,        // paramètres du backtest de la section Trading
+  fibo: null,      // paramètres de la page Fibonacci à levier
   acc: null,       // paramètres de l'accumulation BTC
   requestId: 0,
 };
@@ -171,6 +172,7 @@ function render() {
   if (!ind) return renderHome();
   if (ind.id === "simulator") return renderSimulator(ind);
   if (ind.id === "btc_accumulation") return renderAccumulation(ind);
+  if (ind.id === "fibo_leverage") return renderFibo(ind);
   if (ind.id === "trend_signals") return renderTrendSignals(ind);
   if (ind.id === "trend_backtest") return renderBacktest(ind);
   return renderIndicator(ind);
@@ -774,6 +776,376 @@ async function runAccumulation(ind, box) {
         b.ma_ratio == null ? "–" : fmtNumber(b.ma_ratio, 2), fmtNumber(b.amount), fmtSig(b.price), fmtBtc(b.btc)].map((c) => el("td", {}, c))))))));
 }
 
+// ---------- Fibonacci à levier (backtest, aucun ordre réel) ----------
+
+const FIBO_INTERVALS = [["MINUTE_15", "15 minutes"], ["HOUR_1", "1 heure"], ["HOUR_4", "4 heures"]];
+const FIBO_RATIOS = [0.382, 0.5, 0.618, 0.786];
+const STOP_KINDS = [["next_level", "Au-delà du niveau suivant"], ["origin", "Au-delà de l'origine A"], ["fixed", "Distance fixe"]];
+const TARGET_KINDS = [["return_to_b", "Retour à B (0 %)"], ["ext_1272", "Extension 127,2 %"], ["ext_1618", "Extension 161,8 %"], ["r_multiple", "Multiple du risque"]];
+const FIBO_WARNING = "Le levier ne crée pas d'avantage. À x75, une variation de 0,8 % liquide la position. Les résultats passés ne garantissent rien.";
+
+function fiboDefaults() {
+  return {
+    base: "BTC",
+    fibo: { interval: "HOUR_1", threshold_mode: "atr", atr_mult: 3, threshold_pct: 1, ratios: [...FIBO_RATIOS], direction: "continuation", max_age_bars: 48 },
+    rules: { stop: { kind: "next_level", margin_pct: 0 }, target: { kind: "return_to_b" }, prudent_tick: false, liquidation_as_stop: false, max_hold_bars: 0 },
+    costs: { fees: { maker_pct: 0.02, taker_pct: 0.05 }, slippage_pct: 0.01, funding_pct_8h: 0.01, liquidation_safety_pct: 0.1 },
+    account: { initial_budget: 500, margin: 10, leverage: 20 },
+    study_start: "2023-01-01", study_end: "2024-12-31",
+    test_start: "2025-01-01", test_end: today(),
+    placebo: { draws: 200, seed: 20260101, low: 0.3, high: 0.8, fixed_levels: [0.45, 0.55, 0.7] },
+    mc_draws: 10000,
+    use_mark_price: false,
+  };
+}
+
+const fmtUtc = (ms) => `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+const fmtR = (v) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${fmtNumber(Math.abs(v), 3)} R`);
+const fmtUsd = (v, d = 2) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${fmtNumber(Math.abs(v), d)}`);
+const dataTable = (headers, rows) => el("div", { class: "table-wrap" }, el("table", {},
+  el("thead", {}, el("tr", {}, headers.map((h) => el("th", {}, h)))),
+  el("tbody", {}, rows.map((cells) => el("tr", {}, cells.map((c) => el("td", {}, c)))))));
+const fieldOf = (label, input, hint) => el("label", { class: "field", title: hint || null }, el("span", {}, label), input);
+
+let fiboUnlisten = null;
+
+function renderFibo(ind) {
+  const p = state.fibo || (state.fibo = fiboDefaults());
+  const progressBox = el("div");
+  const dataBox = el("div");
+  const pointsBox = el("div");
+  const results = el("div");
+  const excursionBox = el("div");
+  const runPoints = debounce(() => loadFiboPoints(ind, pointsBox), 500);
+
+  // Progression des téléchargements et des calculs (événement du moteur).
+  if (fiboUnlisten) { fiboUnlisten(); fiboUnlisten = null; }
+  window.__TAURI__.event.listen("fibo-progress", (e) => showFiboProgress(progressBox, e.payload)).then((u) => { fiboUnlisten = u; });
+
+  const num = (obj, key, attrs = {}, after) => el("input", { type: "number", value: obj[key], ...attrs,
+    onchange: (e) => { obj[key] = Number(e.target.value); if (after) after(); } });
+  const date = (obj, key) => el("input", { type: "date", value: obj[key], onchange: (e) => { obj[key] = e.target.value; } });
+  const select = (obj, key, options, after) => el("select", { onchange: (e) => { obj[key] = e.target.value; if (after) after(); } },
+    options.map(([v, l]) => el("option", { value: v, selected: v === obj[key] }, l)));
+  const check = (obj, key, label, after) => el("label", {}, el("input", { type: "checkbox", checked: obj[key],
+    onchange: (e) => { obj[key] = e.target.checked; if (after) after(); } }), ` ${label}`);
+
+  // Champs qui dépendent d'un choix : seuil, stop, objectif.
+  const atrField = fieldOf("k de k × ATR(14)", num(p.fibo, "atr_mult", { step: 0.5, min: 0.5, max: 20 }, runPoints));
+  const pctField = fieldOf("Seuil (%)", num(p.fibo, "threshold_pct", { step: 0.1, min: 0.05, max: 50 }, runPoints));
+  const stopSel = el("select", { onchange: (e) => setStop(e.target.value) },
+    STOP_KINDS.map(([v, l]) => el("option", { value: v, selected: v === p.rules.stop.kind }, l)));
+  const stopVal = el("input", { type: "number", step: 0.1, min: 0, max: 50, value: p.rules.stop.margin_pct ?? p.rules.stop.pct ?? 0,
+    onchange: () => setStop(stopSel.value) });
+  const stopLabel = el("span", {}, "");
+  const setStop = (kind) => {
+    const v = Number(stopVal.value);
+    p.rules.stop = kind === "fixed" ? { kind, pct: v || 1 } : { kind, margin_pct: v };
+    stopLabel.textContent = kind === "fixed" ? "Distance du stop (%)" : "Marge au-delà (%)";
+  };
+  const targetSel = el("select", { onchange: (e) => setTarget(e.target.value) },
+    TARGET_KINDS.map(([v, l]) => el("option", { value: v, selected: v === targetKey(p.rules.target) }, l)));
+  const targetVal = el("input", { type: "number", step: 0.5, min: 0.5, max: 50, value: p.rules.target.r ?? 2, onchange: () => setTarget(targetSel.value) });
+  const targetValField = el("label", { class: "field" }, el("span", {}, "Multiple du risque (R)"), targetVal);
+  function targetKey(t) { return t.kind === "extension" ? (t.ratio > 1.4 ? "ext_1618" : "ext_1272") : t.kind; }
+  const setTarget = (key) => {
+    p.rules.target = key === "ext_1272" ? { kind: "extension", ratio: 1.272 }
+      : key === "ext_1618" ? { kind: "extension", ratio: 1.618 }
+      : key === "r_multiple" ? { kind: "r_multiple", r: Number(targetVal.value) || 2 } : { kind: "return_to_b" };
+    targetValField.hidden = key !== "r_multiple";
+  };
+  const syncThreshold = () => { atrField.hidden = p.fibo.threshold_mode !== "atr"; pctField.hidden = p.fibo.threshold_mode !== "percent"; };
+
+  const ratioBoxes = el("div", { class: "controls" }, el("span", { class: "muted" }, "Niveaux :"),
+    FIBO_RATIOS.map((r) => el("label", {}, el("input", { type: "checkbox", checked: p.fibo.ratios.includes(r), onchange: (e) => {
+      p.fibo.ratios = e.target.checked ? [...p.fibo.ratios, r].sort() : p.fibo.ratios.filter((x) => x !== r);
+      runPoints();
+    } }), ` ${fmtNumber(r * 100, 1)} %`)));
+
+  const leverage = num(p.account, "leverage", { step: 1, min: 1, max: 75 });
+  const runBtn = el("button", { class: "btn", type: "button", onclick: () => runFibo(ind, results, progressBox, runBtn) }, "▶ Lancer l'étude (périodes d'étude et de test)");
+  const syncBtn = el("button", { class: "btn", type: "button", onclick: () => syncFibo(progressBox, dataBox, syncBtn) }, "⬇ Télécharger les bougies 1 min manquantes");
+  const cancelBtn = el("button", { class: "btn", type: "button", onclick: () => invoke("fibo_cancel") }, "✖ Annuler");
+
+  main.replaceChildren(
+    el("h1", {}, `${ind.icon} ${ind.name}`),
+    notice("warning", `⚠️ ${FIBO_WARNING}`),
+    el("p", { class: "muted" }, ind.description),
+    el("h2", {}, "🗄️ Données et contrat"), dataBox,
+    el("div", { class: "controls" }, check(p, "use_mark_price", "Utiliser l'historique du prix de marque pour les liquidations (s'il est disponible)"), syncBtn, cancelBtn),
+    progressBox,
+
+    el("h2", {}, "⚙️ Identification des points"),
+    el("div", { class: "controls" },
+      fieldOf("Unité de détection", select(p.fibo, "interval", FIBO_INTERVALS, runPoints)),
+      fieldOf("Seuil de retournement", select(p.fibo, "threshold_mode", [["atr", "k × ATR(14)"], ["percent", "Pourcentage"]], () => { syncThreshold(); runPoints(); })),
+      atrField, pctField,
+      fieldOf("Sens des trades", select(p.fibo, "direction", [["continuation", "Continuation (acheter le repli, vendre le rebond)"], ["contrary", "Contraire"]], runPoints)),
+      fieldOf("Durée de vie d'une mise en place (bougies)", num(p.fibo, "max_age_bars", { step: 1, min: 1, max: 1000 }, runPoints))),
+    ratioBoxes,
+
+    el("h2", {}, "🎯 Règles de trade"),
+    el("div", { class: "controls" },
+      fieldOf("Stop", stopSel), el("label", { class: "field" }, stopLabel, stopVal),
+      fieldOf("Objectif", targetSel), targetValField,
+      fieldOf("Durée maximale d'un trade (bougies, 0 = aucune)", num(p.rules, "max_hold_bars", { step: 1, min: 0 }))),
+    el("div", { class: "controls" },
+      check(p.rules, "prudent_tick", "Prudent : traverser le niveau d'un tick pour être exécuté", runPoints),
+      check(p.rules, "liquidation_as_stop", "Si la liquidation tombe avant le stop : elle devient le stop (sinon le trade est refusé et compté)")),
+
+    el("h2", {}, "💰 Taille et coûts"),
+    el("div", { class: "controls" },
+      fieldOf("Budget de trading initial (USDT)", num(p.account, "initial_budget", { step: 50, min: 1 })),
+      fieldOf("Marge isolée par trade (USDT)", num(p.account, "margin", { step: 1, min: 1 })),
+      fieldOf("Levier (1 à maximum)", leverage),
+      fieldOf("Frais maker (%) — à vérifier", num(p.costs.fees, "maker_pct", { step: 0.005, min: 0, max: 1 })),
+      fieldOf("Frais taker (%) — à vérifier", num(p.costs.fees, "taker_pct", { step: 0.005, min: 0, max: 1 })),
+      fieldOf("Glissement des sorties au marché (%)", num(p.costs, "slippage_pct", { step: 0.005, min: 0, max: 2 })),
+      fieldOf("Funding supposé (% / 8 h)", num(p.costs, "funding_pct_8h", { step: 0.005, min: -1, max: 1 })),
+      fieldOf("Marge de sécurité de liquidation (%)", num(p.costs, "liquidation_safety_pct", { step: 0.05, min: 0, max: 5 }, null),
+        "Sans historique du prix de marque : la liquidation est déclenchée plus tôt de ce pourcentage du prix.")),
+
+    el("h2", {}, "🧪 Validation"),
+    el("div", { class: "controls" },
+      fieldOf("Étude : début", date(p, "study_start")), fieldOf("Étude : fin", date(p, "study_end")),
+      fieldOf("Test : début", date(p, "test_start")), fieldOf("Test : fin", date(p, "test_end")),
+      fieldOf("Tirages placebo", num(p.placebo, "draws", { step: 50, min: 1, max: 5000 })),
+      fieldOf("Graine", num(p.placebo, "seed", { step: 1 })),
+      fieldOf("Niveaux placebo : min", num(p.placebo, "low", { step: 0.05, min: 0.05, max: 0.95 })),
+      fieldOf("Niveaux placebo : max", num(p.placebo, "high", { step: 0.05, min: 0.05, max: 0.95 })),
+      fieldOf("Tirages Monte-Carlo", num(p, "mc_draws", { step: 1000, min: 100 }))),
+    el("p", { class: "muted" }, "Les réglages se choisissent sur la période d'étude ; le verdict ne se lit que sur la période de test, postérieure et jamais utilisée pour régler. Le placebo rejoue le même moteur avec des niveaux tirés au hasard (graine fixe)."),
+    el("div", { class: "row" }, runBtn),
+    results,
+
+    el("h2", {}, "📍 Points actuels"),
+    el("p", { class: "muted" }, "Dernier mouvement confirmé d'après les bougies récentes de Poloniex : un pivot n'apparaît qu'une fois confirmé, jamais avant."),
+    pointsBox,
+
+    el("h2", {}, "🔎 Contrôle des repères journaliers"),
+    el("p", { class: "muted" }, "Part des jours où le prix s'éloigne de l'ouverture d'au moins une distance donnée (bougies journalières BTC_USDT du 01/05 au 12/10/2026), comparée à vos repères. Ces distances correspondent environ à la liquidation à x100, x75, x50 et x20."),
+    el("div", { class: "row" }, el("button", { class: "btn", type: "button", onclick: () => loadExcursions(excursionBox) }, "Contrôler les repères")),
+    excursionBox,
+  );
+  syncThreshold();
+  setStop(p.rules.stop.kind);
+  setTarget(targetKey(p.rules.target));
+  loadFiboOverview(dataBox, leverage);
+  loadFiboPoints(ind, pointsBox);
+}
+
+function showFiboProgress(box, p) {
+  if (!p) return;
+  const pct = p.total ? Math.round((p.done / p.total) * 100) : null;
+  box.replaceChildren(el("div", { class: "card" },
+    el("div", {}, `${p.phase}${p.total ? ` : ${p.done} / ${p.total}` : ""}${p.at ? ` · ${p.at}` : ""}${p.bars ? ` · ${fmtNumber(p.bars, 0)} bougies reçues` : ""}`),
+    p.total ? el("progress", { max: p.total, value: p.done, style: "width:100%" }) : el("div", { class: "muted" }, "…")));
+}
+
+async function loadFiboOverview(box, leverageInput) {
+  box.replaceChildren(loading("Lecture des paramètres du contrat…"));
+  let o;
+  try { o = await invoke("fibo_overview"); } catch (e) { box.replaceChildren(notice("error", String(e))); return; }
+  box.replaceChildren();
+  if (o.contract) {
+    const c = o.contract;
+    leverageInput.max = c.max_leverage;
+    box.append(el("div", { class: "metrics" },
+      metricCard("Contrat", c.symbol, `Valeur d'un contrat : ${fmtNumber(c.contract_value, 4)} · pas ${fmtNumber(c.lot_size, 0)} · minimum ${fmtNumber(c.min_size, 0)} · tick ${fmtNumber(c.tick_size, 2)}`),
+      metricCard("Levier maximal", `x${fmtNumber(c.max_leverage, 0)}`, "Lu sur l'API : tout levier au-delà est refusé"),
+      metricCard("Marge de maintenance", c.tiers.map((t) => fmtPct(t.rate * 100, 2)).join(" · "), c.tiers_from_risk_limit ? "Paliers lus sur l'API" : "Taux unique de la fiche du contrat")));
+    c.warnings.forEach((w) => box.append(notice("warning", w)));
+  } else {
+    box.append(notice("error", `Paramètres du contrat indisponibles : ${o.contract_error}`));
+  }
+  showFiboStatus(box, o.status);
+}
+
+function showFiboStatus(box, status) {
+  box.querySelectorAll(".fibo-status").forEach((n) => n.remove());
+  box.append(el("div", { class: "fibo-status muted" },
+    `Cache disque (${status.cache_dir}) : ${fmtNumber(status.cache_bytes / 1e6, 1)} Mo. `,
+    status.series.map((s) => `${s.label} : ${s.first ? `${s.first} → ${s.last}` : "vide"}`).join(" · ")));
+}
+
+async function syncFibo(progressBox, dataBox, btn) {
+  const p = state.fibo;
+  btn.disabled = true;
+  progressBox.replaceChildren(loading("Téléchargement des bougies 1 minute (reprenable, annulable)…"));
+  try {
+    const r = await invoke("fibo_sync", { request: p });
+    progressBox.replaceChildren(notice(r.cancelled ? "info" : "success", r.cancelled ? "Téléchargement annulé : ce qui est reçu est conservé, relancez pour reprendre." : "Bougies 1 minute à jour."));
+    r.warnings.forEach((w) => progressBox.append(notice("warning", w)));
+    showFiboStatus(dataBox, r.status);
+  } catch (e) {
+    progressBox.replaceChildren(notice("error", String(e)));
+  } finally { btn.disabled = false; }
+}
+
+async function loadFiboPoints(ind, box) {
+  const id = ++state.requestId;
+  box.replaceChildren(loading("Chargement des bougies récentes…"));
+  let r;
+  try {
+    r = await invoke("fibo_points", { params: state.fibo.fibo, prudentTick: state.fibo.rules.prudent_tick });
+  } catch (e) {
+    if (id === state.requestId) box.replaceChildren(notice("error", String(e)));
+    return;
+  }
+  if (id !== state.requestId) return;
+  box.replaceChildren();
+  const c = r.current;
+  box.append(el("div", { class: "metrics" },
+    metricCard("Unité de détection", r.interval, `ATR(14) : ${r.atr == null ? "–" : fmtSig(r.atr)} · seuil de retournement : ${r.threshold == null ? "–" : fmtSig(r.threshold)} USDT`)));
+  if (!c) { box.append(notice("info", "Aucun mouvement confirmé dans les bougies chargées.")); }
+  else {
+    box.append(el("div", { class: "metrics" },
+      metricCard("Dernier mouvement confirmé", c.up ? "Haussier ▲" : "Baissier ▼", `A (${c.up ? "creux" : "sommet"}) : ${fmtSig(c.a_price)} le ${fmtUtc(c.a_time)}`),
+      metricCard("Point B", fmtSig(c.b_price), `${c.up ? "Sommet" : "Creux"} du ${fmtUtc(c.b_time)}`),
+      metricCard("Confirmé le", fmtUtc(c.confirmed_time), `Sens des trades : ${c.side === "long" ? "achat" : "vente"} · ${c.active ? "mise en place active" : c.ended}`)));
+    const color = { "En attente": "", "Déclenché": "up", "Invalidé": "down" };
+    box.append(dataTable(["Niveau", "Prix", "Statut"], c.levels.map((l) => [`${fmtNumber(l.ratio * 100, 1)} %`, fmtSig(l.price),
+      el("span", { class: `chip ${color[l.status]}` }, l.status)])));
+    if (c.ignored.length) box.append(el("p", { class: "muted" }, `Niveaux déjà dépassés à la confirmation, ignorés : ${c.ignored.map((x) => `${fmtNumber(x * 100, 1)} %`).join(", ")}.`));
+  }
+  plot(box, r.chart, scaleFor(ind), ["yaxis"]);
+}
+
+async function loadExcursions(box) {
+  box.replaceChildren(loading("Chargement des bougies journalières…"));
+  try {
+    const r = await invoke("fibo_excursions");
+    box.replaceChildren(el("p", { class: "muted" }, `${r.days} jours, du ${r.first} au ${r.last}.`),
+      dataTable(["Distance", "Hausse (mesure / repère)", "Baisse (mesure / repère)", "Les deux (mesure / repère)", "Écart maximal"],
+        r.rows.map((x) => [`${fmtNumber(x.measured.distance_pct, 2)} %`,
+          `${fmtNumber(x.measured.up_pct, 0)} % / ${fmtNumber(x.reference_up, 0)} %`,
+          `${fmtNumber(x.measured.down_pct, 0)} % / ${fmtNumber(x.reference_down, 0)} %`,
+          `${fmtNumber(x.measured.both_pct, 0)} % / ${fmtNumber(x.reference_both, 0)} %`,
+          `${fmtNumber(x.max_gap, 1)} pt`])));
+  } catch (e) { box.replaceChildren(notice("error", String(e))); }
+}
+
+async function runFibo(ind, box, progressBox, btn) {
+  const p = state.fibo;
+  btn.disabled = true;
+  box.replaceChildren(loading("Étude en cours : simulation, niveaux placebo, Monte-Carlo (peut durer plusieurs dizaines de secondes)…"));
+  let r;
+  try {
+    r = await invoke("fibo_run", { request: p });
+  } catch (e) {
+    box.replaceChildren(notice("error", String(e)));
+    btn.disabled = false;
+    return;
+  }
+  btn.disabled = false;
+  progressBox.replaceChildren();
+  box.replaceChildren();
+  r.warnings.forEach((w) => box.append(notice("warning", w)));
+
+  // Verdict : lu sur la période de test.
+  const v = r.verdict;
+  const cls = v.verdict === "Avantage démontré sur la période de test" ? "success" : "warning";
+  box.append(el("h2", {}, "⚖️ Verdict (période de test)"),
+    notice(cls, `${v.label}.`),
+    dataTable(["Critère", "Valeur", ""], v.criteria.map((c) => [c.name, c.value, c.ok ? "✓" : "✗"])));
+
+  const t = r.test;
+  const s = t.summary;
+  const st = t.stats;
+  box.append(el("h2", {}, "📊 Période de test"), el("div", { class: "metrics" },
+    metricCard("Mises en place", String(st.setups), `${st.placed} posées · ${st.levels_ignored} niveaux déjà dépassés · ${st.skipped_busy} ignorées (position ouverte)`),
+    metricCard("Trades", String(s.trades), `Taux de réussite : ${s.win_rate_pct == null ? "–" : fmtPct(s.win_rate_pct, 1)}`),
+    metricCard("Refus", String(st.refused_min_size + st.refused_liquidation + st.refused_other),
+      `${st.refused_min_size} moins d'un contrat · ${st.refused_liquidation} liquidation avant le stop · ${st.refused_other} autres`),
+    metricCard("Liquidations", String(s.liquidations), "Toute la marge isolée est perdue"),
+    metricCard("Bougies ambiguës", String(st.ambiguous), "Stop et objectif dans la même bougie 1 min : sortie défavorable"),
+    metricCard("Espérance nette par trade", fmtR(s.expectancy_r_net), `En USDT : ${fmtUsd(s.expectancy_usdt)} · brute : ${fmtR(s.expectancy_r_gross)}`, null, true),
+    metricCard("Frais et funding", `${fmtPct(s.fees_pct_of_margin, 1)} + ${fmtPct(s.funding_pct_of_margin, 2)}`, "En % des marges engagées"),
+    metricCard("Budget final", `${fmtNumber(s.final_budget)} USDT`, `Initial : ${fmtNumber(s.initial_budget)} · pire baisse : ${fmtPct(s.max_drawdown_pct, 1)}${s.ruined ? ` · RUINE le ${t.ruin_time}` : ""}`)));
+  if (s.ruined) box.append(notice("error", `💀 Ruine : la marge d'un trade n'est plus finançable (${t.ruin_time}). La simulation s'arrête.`));
+
+  // Étude et test côte à côte.
+  const col = (period) => {
+    const m = period.summary;
+    return [String(m.trades), m.win_rate_pct == null ? "–" : fmtPct(m.win_rate_pct, 1), fmtR(m.expectancy_r_net), fmtR(m.expectancy_r_gross),
+      fmtUsd(m.expectancy_usdt), fmtUsd(m.total_net), fmtPct(m.fees_pct_of_margin, 1), fmtPct(m.funding_pct_of_margin, 2),
+      fmtNumber(m.final_budget), fmtPct(m.max_drawdown_pct, 1), String(m.liquidations),
+      period.placebo.percentile == null ? "–" : `${fmtNumber(period.placebo.percentile * 100, 1)} %`,
+      `${fmtR(period.x1.expectancy_r_net)} (${period.x1.trades} trades)`];
+  };
+  const labels = ["Trades", "Taux de réussite", "Espérance nette par trade", "Espérance brute par trade", "Espérance (USDT)", "Résultat net (USDT)",
+    "Frais (% des marges)", "Funding (% des marges)", "Budget final (USDT)", "Pire baisse du budget", "Liquidations", "Rang de Fibonacci face au placebo", "Même jeu à x1 (R seulement)"];
+  const [cs, ct] = [col(r.study), col(t)];
+  box.append(el("h2", {}, "↔️ Étude et test côte à côte"),
+    dataTable(["", `Étude (${r.study.start} → ${r.study.end})`, `Test (${t.start} → ${t.end})`], labels.map((l, i) => [l, cs[i], ct[i]])),
+    el("p", { class: "muted" }, "À x1, le même moteur (quantité fractionnaire, sans liquidation ni arrondi aux contrats) donne la même espérance en R : le levier change la taille de la position et les frais rapportés à la marge, pas l'avantage."));
+
+  // Détail par niveau.
+  const levelRows = (rows) => rows.map((l) => [`${fmtNumber(l.ratio * 100, 1)} %`, String(l.trades), l.win_rate_pct == null ? "–" : fmtPct(l.win_rate_pct, 1), fmtR(l.expectancy_r_net), fmtUsd(l.total_net)]);
+  const levelHeaders = ["Niveau", "Trades", "Réussite", "Espérance nette", "Net (USDT)"];
+  box.append(el("h2", {}, "📐 Détail par niveau (période de test)"),
+    el("h3", {}, "Niveaux de Fibonacci"), dataTable(levelHeaders, levelRows(t.per_level)),
+    el("h3", {}, `Niveaux fixes comparables (${t.fixed_levels.map((x) => fmtNumber(x, 2)).join(" ; ")})`), dataTable(levelHeaders, levelRows(t.fixed_per_level)));
+
+  // Placebo et Monte-Carlo.
+  const pl = t.placebo;
+  box.append(el("h2", {}, "🎲 Niveaux placebo"), el("div", { class: "metrics" },
+    metricCard("Rang de Fibonacci (test)", pl.percentile == null ? "–" : `${fmtNumber(pl.percentile * 100, 1)} %`, `Part des ${pl.valid_draws} tirages valides qu'il bat strictement`, null, true),
+    metricCard("Placebo : moyenne", fmtR(pl.mean), `5 % : ${fmtR(pl.p5)} · médiane : ${fmtR(pl.median)} · 95 % : ${fmtR(pl.p95)}`),
+    metricCard("Fibonacci", fmtR(pl.fibo_expectancy_r_net), "Espérance nette par trade")));
+  plot(box, t.placebo_chart, null, []);
+  plot(box, r.study.placebo_chart, null, []);
+  const mc = t.monte_carlo;
+  if (mc) {
+    box.append(el("h2", {}, "🎰 Monte-Carlo sur la suite des trades (test)"), el("div", { class: "metrics" },
+      metricCard("Budget final médian", `${fmtNumber(mc.final_quantiles[2])} USDT`, `5 % : ${fmtNumber(mc.final_quantiles[0])} · 95 % : ${fmtNumber(mc.final_quantiles[4])} · moyenne : ${fmtNumber(mc.final_mean)}`),
+      metricCard("Probabilité de perdre 50 %", fmtPct(mc.prob_loss_50 * 100, 1), "Budget passant sous la moitié de son montant initial"),
+      metricCard("Probabilité de ruine", fmtPct(mc.prob_ruin * 100, 1), "Perte de tout le budget (marge non finançable)"),
+      metricCard("Pire série de pertes", `${fmtNumber(mc.worst_streak_median, 0)} (95 % : ${fmtNumber(mc.worst_streak_p95, 0)})`, `Observée : ${mc.worst_streak_observed} trades · ${fmtNumber(mc.draws, 0)} tirages`)));
+    plot(box, t.monte_carlo_chart, null, []);
+  }
+
+  // Graphiques.
+  box.append(el("h2", {}, "📈 Prix, pivots, niveaux et trades"));
+  plot(box, r.price_chart, scaleFor(ind), ["yaxis"]);
+  box.append(el("h2", {}, "💼 Budget et résultats en R"));
+  plot(box, r.study.budget_chart, null, []);
+  plot(box, t.budget_chart, null, []);
+  plot(box, r.study.r_chart, null, []);
+  plot(box, t.r_chart, null, []);
+
+  // Trades, avec zoom.
+  const zoomBox = el("div");
+  const tradesFor = (period) => period.trades.map((x, i) => {
+    const row = [String(x.id + 1), fmtUtc(x.entry_time), x.side === "long" ? "Achat" : "Vente", `${fmtNumber(x.ratio * 100, 1)} %`, fmtSig(x.entry_price),
+      fmtUtc(x.exit_time), fmtSig(x.exit_price), x.reason, `x${fmtNumber(x.leverage, 0)}`, fmtNumber(x.margin), fmtUsd(x.net), fmtR(x.r_net)];
+    return { row, i };
+  });
+  const periodSel = el("select", {}, [["test", "Période de test"], ["study", "Période d'étude"]].map(([v, l]) => el("option", { value: v }, l)));
+  const tableBox = el("div");
+  const showTrades = () => {
+    const period = periodSel.value === "study" ? r.study : t;
+    tableBox.replaceChildren(el("div", { class: "table-wrap" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["N°", "Entrée", "Sens", "Niveau", "Prix", "Sortie", "Prix", "Motif", "Levier", "Marge", "Net (USDT)", "R net"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, tradesFor(period).map(({ row, i }) => el("tr", { style: "cursor:pointer", title: "Cliquer pour zoomer sur ce trade", onclick: async () => {
+        zoomBox.replaceChildren(loading("Chargement des bougies 1 minute…"));
+        try { const fig = await invoke("fibo_zoom", { period: periodSel.value, index: i }); zoomBox.replaceChildren(); plot(zoomBox, fig, null, []); }
+        catch (e) { zoomBox.replaceChildren(notice("error", String(e))); }
+      } }, row.map((c) => el("td", {}, c))))))));
+  };
+  periodSel.addEventListener("change", showTrades);
+  box.append(el("h2", {}, "📝 Trades"), el("div", { class: "controls" }, periodSel), tableBox, zoomBox);
+  showTrades();
+
+  const status = el("div");
+  box.append(el("h2", {}, "📥 Exporter"), el("div", { class: "row" }, el("button", { class: "btn", type: "button", onclick: async () => {
+    try { const path = await invoke("fibo_export"); if (path) status.replaceChildren(notice("success", `Fichier enregistré : ${path}`)); }
+    catch (e) { status.replaceChildren(notice("error", String(e))); }
+  } }, "Trades (CSV)")), status);
+  if (ind.interpretation) box.append(notice("info", `💡 ${ind.interpretation}`));
+  box.append(notice("warning", `⚠️ ${FIBO_WARNING}`));
+}
+
 // ---------- Démarrage ----------
 
 document.querySelectorAll("#scale input").forEach((radio) => radio.addEventListener("change", () => {
@@ -781,7 +1153,8 @@ document.querySelectorAll("#scale input").forEach((radio) => radio.addEventListe
   if (!ind) return;
   state.scale[ind.id] = radio.value;
   main.querySelectorAll(".chart").forEach((div) => {
-    const axes = (div.dataset.axes || "yaxis").split(",");
+    const axes = (div.dataset.axes ?? "yaxis").split(",").filter(Boolean);
+    if (!axes.length) return;
     Plotly.relayout(div, Object.fromEntries(axes.map((a) => [`${a}.type`, radio.value])));
   });
 }));

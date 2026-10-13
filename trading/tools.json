@@ -8,6 +8,14 @@
         "interpretation": "Le chiffre à regarder est « BTC en plus à budget égal » : un DCA fixe dépensant exactement le même total, en montants égaux aux mêmes dates. Une pondération qui dépense plus qu'un DCA fixe de même montant de base n'est pas meilleure pour autant : comparez toujours à budget égal. Aucune règle « tout ou rien » : le MVRV est descendu à 1,15 seulement au creux de 2026 et ses sommets baissent à chaque cycle (4,7 en 2017, 4,0 en 2021, 2,8 en 2024). Un résultat passé n'est pas une garantie ; aucun ordre n'est passé."
     },
     {
+        "id": "fibo_leverage",
+        "name": "Fibonacci à levier (backtest)",
+        "icon": "📐",
+        "description": "Trades courts à fort levier (x20 à x75) sur de petits montants, quand le prix revient sur un niveau de retracement de Fibonacci. Identification mécanique des niveaux, sans biais d'anticipation, et backtest honnête sur bougies 1 minute : en multiples du risque (R), face à des niveaux placebo, hors échantillon.",
+        "default_scale": "linéaire",
+        "interpretation": "Le résultat par défaut est « avantage non démontré ». Il faut, sur la période de test (jamais utilisée pour régler), une espérance nette positive par trade, un rang d'au moins 95 % face aux niveaux placebo et au moins 200 trades. Le levier ne crée pas d'avantage : il fixe la taille de la position et le prix de liquidation ; l'avantage se lit en R, indépendamment du levier. Ce budget de trading est séparé de votre stock de BTC. Aucun ordre réel n'est passé."
+    },
+    {
         "id": "trend_signals",
         "name": "Signaux de tendance",
         "icon": "🧭",

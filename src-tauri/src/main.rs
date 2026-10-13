@@ -232,7 +232,15 @@ fn main() {
             trading::trading_signals,
             trading::run_backtest,
             trading::run_accumulation,
-            trading::export_backtest
+            trading::export_backtest,
+            trading::fibo_overview,
+            trading::fibo_sync,
+            trading::fibo_cancel,
+            trading::fibo_run,
+            trading::fibo_zoom,
+            trading::fibo_points,
+            trading::fibo_excursions,
+            trading::fibo_export
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de l'application");

@@ -329,6 +329,10 @@ API publique de Poloniex, sans clé ni compte ([`trading/src/poloniex.rs`](tradi
 |---|---|---|
 | Bougies spot | `GET /markets/{symbole}/candles` (ex. `BTC_USDT`) | 500 bougies par requête ; historique BTC vérifié depuis janvier 2017 |
 | Bougies du perpétuel | `GET /v3/market/candles` (ex. `BTC_USDT_PERP`) | 500 bougies par requête ; historique vérifié depuis janvier 2023 |
+| Bougies 1 minute (perpétuel et comptant) | mêmes endpoints, intervalle `MINUTE_1` (aussi `MINUTE_15`, `HOUR_1`) | 500 bougies par requête, soit environ 1 050 requêtes par an ; **profondeur réelle non documentée**, détectée au téléchargement ; gardées sur disque (voir Fibonacci à levier) |
+| Fiche du contrat | `GET /v3/market/allInstruments?symbol=…` : `maxLever`, `ctVal`, `lotSz`, `minSz`, `tSz`, `mM` | lue au plus une fois par jour, gardée sur disque |
+| Paliers de marge de maintenance | `GET /v3/market/riskLimit?symbol=…` | format non vérifié : lecture tolérante, repli sur `mM` |
+| Prix de marque | `GET /v3/market/markPriceCandlesticks` | facultatif ; format non vérifié |
 | Funding du perpétuel | `GET /v3/market/fundingRate/history` | un taux toutes les 8 h, 100 par requête, **180 derniers jours seulement** |
 
 Le module d'accumulation BTC utilise en plus le MVRV du bitcoin, dans deux sources publiques sans clé ([`trading/src/mvrv.rs`](trading/src/mvrv.rs)) :
@@ -427,10 +431,54 @@ Il n'y a pas de règle « tout ou rien » du type « acheter seulement si MVRV <
 - comparaison secondaire : DCA fixe au même montant de base, donc à budget total différent (une pondération qui dépense plus accumule plus sans être meilleure : seule la comparaison à budget égal isole l'apport de la pondération) ;
 - graphique en trois rangées : prix en échelle logarithmique avec les achats en marqueurs de taille proportionnelle au montant ; BTC accumulés (pondéré, fixe à budget égal, fixe au montant de base) ; poids de chaque achat et MVRV.
 
+### Fibonacci à levier (backtest)
+
+Page « 📐 Fibonacci à levier (backtest) » ([`fibo.rs`](trading/src/fibo.rs), [`leveraged.rs`](trading/src/leveraged.rs), [`validation.rs`](trading/src/validation.rs)). Elle teste l'idée suivante : ouvrir des trades courts à fort levier (x20 à x75), sur de petits montants, quand le prix revient sur un niveau de retracement de Fibonacci. Le budget de trading est séparé du stock de BTC. **Le module peut conclure « avantage non démontré », et c'est son résultat par défaut.** Le levier ne crée pas d'avantage : il fixe la taille de la position et le prix de liquidation. Chaque trade est donc aussi mesuré en multiples du risque (R), indépendamment du levier, et comparé à des niveaux placebo. Aucun ordre réel, aucune clé API.
+
+**Identification des niveaux, sans biais d'anticipation.** Sur l'unité de détection (15 min, 1 h par défaut, ou 4 h), un zigzag en ligne :
+- un pivot n'est *confirmé* qu'à la clôture de la bougie où le prix s'est retourné d'au moins $k \times \text{ATR}_{14}$ ($k = 3$ par défaut, ATR connu avant la bougie) ou d'un pourcentage, depuis l'extrême ; l'instant de confirmation est conservé ; une bougie ne confirme jamais l'extrême qu'elle vient de former ;
+- le calcul est en ligne (une bougie après l'autre) : les pivots confirmés avant $t$ sont identiques avec les données jusqu'à $t$ ou avec toutes les données (test `pivots_do_not_change_when_more_data_arrives` ; la simulation complète est testée de la même façon) ;
+- le mouvement de référence est formé des deux derniers pivots confirmés, A puis B ; les niveaux valent $B - r\,(B - A)$ pour $r \in \lbrace 0{,}382 ;\ 0{,}5 ;\ 0{,}618 ;\ 0{,}786 \rbrace$ (cases à cocher), dans les deux sens ;
+- à la confirmation de B, seuls les niveaux encore devant le prix sont posés ; les autres sont ignorés et comptés ;
+- sens « continuation » (acheter le repli d'un mouvement haussier, vendre le rebond d'un baissier) ou « contraire » ; en sens contraire l'entrée est un ordre stop (frais taker, glissement) et le stop et l'objectif sont en miroir (stop au niveau précédent ou en B, objectif en A) ;
+- la mise en place est annulée par un nouveau pivot confirmé, un prix au-delà de l'origine A, ou après N bougies de détection (48 par défaut).
+
+Le panneau « Points actuels » montre le dernier mouvement confirmé (dates de A, de B et de la confirmation) et l'état de chaque niveau : en attente, déclenché, invalidé.
+
+**Règles de trade** (simulées bougie 1 minute par bougie 1 minute, les signaux de l'unité de détection n'agissant qu'après leur clôture) :
+- **entrée** : ordre limite au niveau (frais maker), exécuté si le plus bas (achat) ou le plus haut (vente) d'une bougie 1 min le touche, jamais à un meilleur prix que le sien ; option prudente : le traverser d'un tick (aussi pour l'objectif) ; le premier niveau touché ouvre le trade, un trade par mouvement, une seule position à la fois ;
+- **stop** : au-delà du niveau suivant (entrée à 61,8 % : stop à 78,6 %, puis l'origine A), plus une marge en % ; ou au-delà de l'origine A ; ou à distance fixe en % ; sortie au marché (frais taker, glissement) ;
+- **objectif** : retour à B, extension 127,2 % ou 161,8 % du mouvement A→B, ou multiple fixe du risque ; sortie limite (frais maker) ;
+- **taille** : marge isolée par trade et levier $L$ (1 au maximum lu sur l'API ; au-delà : refusé). Le montant engagé, marge × $L$, est arrondi vers le bas au nombre entier de contrats (`ctVal`, `lotSz`) ; moins d'un contrat : refusé et compté ;
+- **liquidation** (marge isolée) : $\text{entrée} \times (1 - 1/L + m)$ pour un achat, $\text{entrée} \times (1 + 1/L - m)$ pour une vente, $m$ étant la marge de maintenance ; toute la marge isolée est perdue. Si elle tombe avant le stop, le trade est refusé et compté (option : la liquidation devient le stop). Sans historique du prix de marque, elle se lit sur le dernier prix avec une marge de sécurité paramétrable (0,1 %) ;
+- **funding** toutes les 8 h sur le montant engagé (taux réel sur 180 jours, sinon taux supposé de 0,01 % par 8 h) ;
+- **R** est la perte prévue au stop : quantité × distance entrée-stop, hors frais. L'espérance nette en R inclut frais, glissement et funding ;
+- **ruine** : on arrête quand la marge n'est plus finançable (budget initial 500 USDT par défaut) ; elle est affichée ;
+- **bougie ambiguë** : si le stop (ou la liquidation) et l'objectif sont touchés dans la même bougie 1 min, on compte la sortie défavorable ; l'objectif n'est jamais évalué dans la bougie d'entrée ; le nombre de ces cas est affiché.
+
+**Frais** : défauts maker 0,02 % et taker 0,05 %, modifiables, **à vérifier** : la grille des perpétuels dépend du compte et n'est pas publique par API (des sources publiques donnent selon la date 0,01 %/0,04 % ou 0,01 %/0,075 %).
+
+**Données 1 minute et cache disque.** Plusieurs années de 1 minute, ce sont des millions de bougies : elles sont gardées dans le dossier de données de l'application (`fibo-candles/`, un fichier binaire par mois et par série, 20 octets par bougie, soit environ 40 Mo pour quatre ans), avec la liste des plages déjà interrogées. Le téléchargement est incrémental et reprenable (relancé, il ne demande que ce qui manque), avec progression et annulation dans l'interface ; il ralentit sur une réponse HTTP 429 puis s'arrête en gardant ce qui est reçu. La bougie en cours n'est jamais stockée. La profondeur réelle de l'historique 1 min est détectée par recherche dichotomique ; si le perpétuel ne remonte pas assez loin, les bougies 1 min du comptant `BTC_USDT` servent de trajectoire avant cette date, avec un avertissement (funding et frais restent ceux du perpétuel). Les paramètres du contrat (levier maximal, `ctVal`, marge de maintenance) sont lus sur l'API.
+
+**Protocole de validation** :
+1. **Placebo** : le même moteur est relancé avec des niveaux tirés au hasard, uniformes entre 0,30 et 0,80, graine fixe, 200 tirages (réglables). On affiche la distribution de l'espérance nette par trade et le rang de Fibonacci (part des tirages qu'il bat strictement). Avec des niveaux fixes comparables (0,45 ; 0,55 ; 0,70), le détail par niveau est aussi affiché.
+2. **Hors échantillon** : réglages sur la période d'étude (01/01/2023 → 31/12/2024), jugement sur la période de test (01/01/2025 → aujourd'hui), affichées côte à côte. La période de test doit suivre celle d'étude. Chaque période est rejouée séparément, avec quelques jours de préchauffage sans trade.
+3. **Monte-Carlo** : les trades de la période de test sont rééchantillonnés avec remise (10 000 tirages, résultat en R et en USDT ensemble) : distribution du budget final, probabilité de passer sous 50 % du budget et de le perdre en entier, pire série de pertes.
+4. **Verdict** (période de test seulement) : « avantage non démontré » sauf si l'espérance nette par trade est positive, Fibonacci bat au moins 95 % des tirages placebo et il y a au moins 200 trades ; « pas assez de trades » en dessous de 200.
+5. **Même jeu à x1** : le moteur en mode « R seulement » (levier 1, quantité fractionnaire, ni liquidation ni arrondi aux contrats) donne la même espérance en R : le levier change la taille et les frais rapportés à la marge, pas l'avantage.
+
+**Repères de contrôle** :
+- une marche aléatoire synthétique (graine fixe) doit donner une espérance brute ≈ 0 R, une espérance nette ≈ −coûts, et, avec un stop à 1R et un objectif à 2R, environ s/(s+t) = 1/3 de trades gagnants (test automatique : 33,2 % sur 687 trades) ; sinon, il y aurait un biais d'anticipation ou une erreur d'exécution ;
+- le bouton « Contrôler les repères » de la page mesure, sur les bougies journalières BTC_USDT du 01/05 au 12/10/2026, la part des jours où le prix s'éloigne de l'ouverture de 0,5 %, 0,83 %, 1,5 % et 4,5 % (≈ liquidation à x100, x75, x50 et x20), et la compare à vos repères ;
+- calcul d'équilibre (test unitaire) : à x100, objectif +1,5 %, liquidation −0,5 % qui coûte toute la marge, 0,05 % de frais par ordre : il faut environ 43 % de trades gagnants, contre 25 % sans avantage ni frais.
+
+**Performance** : en version release, une simulation sur 3 ans de 1 minute (environ 2 millions de bougies) prend environ 25 ms ; l'étude complète (deux périodes, 200 placebo chacune, Monte-Carlo) environ 1 s sur des données synthétiques (`cargo test --release -p trading-engine --test render_trading fibo_timing -- --ignored --nocapture`).
+
 ### Limites
 
 - Un backtest favorable n'est pas une preuve. Les paramètres par défaut sont choisis a priori, d'après la littérature sur le suivi de tendance, et non optimisés sur ces données ; validez-les sur une période non utilisée, puis en paper trading.
 - L'exécution réelle des ordres n'est pas encore écrite. Elle réutilisera les mêmes signaux et règles de risque, avec une clé API Poloniex limitée au trading (sans droit de retrait). Vérifiez d'abord que Poloniex peut vous servir dans votre pays (règlement européen MiCA).
+- Fibonacci à levier : la formule de liquidation de Poloniex, sa grille de frais, le format de `riskLimit` et du prix de marque, la profondeur de l'historique 1 min et les limites exactes de requêtes n'ont pas pu être vérifiés (voir la liste dans la description de la livraison) ; les paramètres du contrat viennent de l'API et le format de `allInstruments` du code de référence `ccxt`. Un seul taux de maintenance est utilisé si les paliers ne sont pas lisibles.
 - Le funding de plus de 180 jours est supposé, et le perpétuel n'a pas d'historique vérifié avant 2023.
 - Le MVRV de Coin Metrics et celui de BGeometrics peuvent différer légèrement (calcul de la capitalisation réalisée) : l'écart est mesuré et signalé, pas corrigé.
 - L'accumulation pondérée suppose que le MVRV reste un bon indicateur de cycle ; ses sommets baissent à chaque cycle, ce qui est une raison de ne pas en faire une règle tout ou rien. Un résultat passé n'est pas une garantie.
@@ -532,7 +580,7 @@ cargo test --workspace   # tests (après un premier `npm run vendor`)
 
 Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Fear & Greed / SEC (liste des dépôts, nombre d'actions en page de couverture, BTC détenus dans les 8-K), le cache disque, le rapport PDF, et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
 
-Ceux du moteur de trading couvrent ses indicateurs (EMA, ATR, canaux, volatilité), les signaux de cassure, les règles de risque, le backtest (exécution à l'ouverture suivante, frais, spot sans emprunt, stop et reprise, funding réel ou supposé, coupe-circuits), les résultats en BTC, la variante cassure, les mesures de performance, le décodage des réponses Poloniex, la lecture et le raccordement du MVRV (Coin Metrics, BGeometrics, limiteur de requêtes) et l'accumulation (calendrier, paliers, chronologie sans biais d'anticipation, comparaisons à budget égal, secours sans MVRV). `trading/tests/render_trading.rs` rejoue les pages Trading sur un marché et un MVRV synthétiques, sans réseau ; avec `TRADING_SAMPLES_HTML=/tmp/trading.html`, il écrit aussi des pages affichant leurs figures (`/tmp/trading.html`, `/tmp/trading-accumulation.html`).
+Ceux du moteur de trading couvrent ses indicateurs (EMA, ATR, canaux, volatilité), les signaux de cassure, les règles de risque, le backtest (exécution à l'ouverture suivante, frais, spot sans emprunt, stop et reprise, funding réel ou supposé, coupe-circuits), les résultats en BTC, la variante cassure, les mesures de performance, le décodage des réponses Poloniex, la lecture et le raccordement du MVRV (Coin Metrics, BGeometrics, limiteur de requêtes) et l'accumulation (calendrier, paliers, chronologie sans biais d'anticipation, comparaisons à budget égal, secours sans MVRV). les paramètres du contrat et les bougies 1 minute (extraits de l'API), le zigzag non rétroactif, les niveaux, la mise en place et son annulation, les ordres limites, la bougie ambiguë, la liquidation, l'arrondi aux contrats, le funding, les frais maker et taker, le placebo déterministe, le Monte-Carlo, le verdict et les repères de contrôle. `trading/tests/render_trading.rs` rejoue les pages Trading sur un marché et un MVRV synthétiques, sans réseau ; avec `TRADING_SAMPLES_HTML=/tmp/trading.html`, il écrit aussi des pages affichant leurs figures (`/tmp/trading.html`, `/tmp/trading-accumulation.html`).
 
 ### Publier une version
 
@@ -559,6 +607,7 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
   - `risk.rs` : cible de volatilité, plafond de levier, rééquilibrage, stop suiveur, coupe-circuits.
   - `backtest.rs`, `metrics.rs` : simulation barre par barre et mesures de performance.
   - `signals.rs` : signal à la dernière clôture.
+  - `fibo.rs`, `leveraged.rs`, `validation.rs`, `fibo_report.rs`, `fibo_chart.rs` : Fibonacci à levier (identification des points, simulation 1 min, placebo, Monte-Carlo, verdict, rapport et figures) ; `contract.rs`, `candle_store.rs`, `fibo_data.rs` : paramètres du contrat, cache disque et téléchargement des bougies 1 minute.
   - `accumulation.rs`, `mvrv.rs` : accumulation de BTC (achats pondérés, jamais de vente) et historique du MVRV (Coin Metrics + BGeometrics).
   - `chart.rs`, `tools.json` : figures et pages de la section Trading.
 - `src-tauri/` : application de bureau (commandes appelées par l'interface ; celles de la section Trading dans `src/trading.rs`) et configuration des paquets : `tauri.conf.json` commun, `tauri.linux.conf.json` (`.deb`), `tauri.windows.conf.json` (installateur NSIS).

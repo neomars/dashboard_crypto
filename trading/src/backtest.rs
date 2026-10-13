@@ -77,6 +77,10 @@ impl BacktestParams {
         self.instrument()?;
         let check = |ok: bool, msg: &str| if ok { Ok(()) } else { Err(msg.to_string()) };
         check(
+            matches!(self.interval, Interval::D1 | Interval::H4),
+            "Le backtest tendance ne gère que les bougies de 1 jour et de 4 heures.",
+        )?;
+        check(
             self.start < self.end,
             "La date de début doit être antérieure à la date de fin.",
         )?;

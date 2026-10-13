@@ -33,6 +33,12 @@ impl Market {
 /// Durée d'une bougie.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Interval {
+    #[serde(rename = "MINUTE_1")]
+    M1,
+    #[serde(rename = "MINUTE_15")]
+    M15,
+    #[serde(rename = "HOUR_1")]
+    H1,
     #[serde(rename = "HOUR_4")]
     H4,
     #[serde(rename = "DAY_1")]
@@ -43,6 +49,9 @@ impl Interval {
     /// Nom attendu par l'API Poloniex.
     pub fn api_name(self) -> &'static str {
         match self {
+            Interval::M1 => "MINUTE_1",
+            Interval::M15 => "MINUTE_15",
+            Interval::H1 => "HOUR_1",
             Interval::H4 => "HOUR_4",
             Interval::D1 => "DAY_1",
         }
@@ -50,6 +59,9 @@ impl Interval {
 
     pub fn label(self) -> &'static str {
         match self {
+            Interval::M1 => "1 minute",
+            Interval::M15 => "15 minutes",
+            Interval::H1 => "1 heure",
             Interval::H4 => "4 heures",
             Interval::D1 => "1 jour",
         }
@@ -57,6 +69,9 @@ impl Interval {
 
     pub fn millis(self) -> i64 {
         match self {
+            Interval::M1 => 60_000,
+            Interval::M15 => 15 * 60_000,
+            Interval::H1 => 3_600_000,
             Interval::H4 => 4 * 3_600_000,
             Interval::D1 => DAY_MS,
         }
@@ -165,7 +180,7 @@ pub fn fmt_time(ms: i64, interval: Interval) -> String {
     let dt = DateTime::from_timestamp_millis(ms).unwrap_or_default();
     match interval {
         Interval::D1 => dt.format("%Y-%m-%d").to_string(),
-        Interval::H4 => dt.format("%Y-%m-%d %H:%M").to_string(),
+        _ => dt.format("%Y-%m-%d %H:%M").to_string(),
     }
 }
 
@@ -195,6 +210,15 @@ mod tests {
         assert_eq!(Interval::H4.bars_per_year(), 2190.0);
         assert_eq!(Interval::H4.bars_for_days(30), 180);
         assert_eq!(Interval::D1.api_name(), "DAY_1");
+        assert_eq!(Interval::M1.api_name(), "MINUTE_1");
+        assert_eq!(Interval::M15.api_name(), "MINUTE_15");
+        assert_eq!(Interval::H1.api_name(), "HOUR_1");
+        assert_eq!(Interval::M1.bars_per_day(), 1440.0);
+        assert_eq!(Interval::H1.bars_for_days(2), 48);
+        assert_eq!(
+            serde_json::to_string(&Interval::M15).unwrap(),
+            "\"MINUTE_15\""
+        );
     }
 
     #[test]
