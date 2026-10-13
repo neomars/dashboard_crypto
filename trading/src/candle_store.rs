@@ -122,7 +122,7 @@ fn decode(bytes: &[u8]) -> Result<BTreeMap<u32, [u32; 4]>, String> {
         u32::from_le_bytes([c[k * 4], c[k * 4 + 1], c[k * 4 + 2], c[k * 4 + 3]])
     };
     Ok(bytes
-        .chunks_exact(RECORD_BYTES)
+        .chunks(RECORD_BYTES)
         .map(|c| (word(c, 0), [word(c, 1), word(c, 2), word(c, 3), word(c, 4)]))
         .collect())
 }
