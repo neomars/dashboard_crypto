@@ -8,8 +8,9 @@ name: Build
 # démarre, puis publié (artefacts du workflow, Release sur tag).
 #
 # Lancement : à chaque pull request (les paquets sont alors téléchargeables
-# depuis les artefacts du workflow), en poussant un tag `v*` pour une vraie
-# release, ou manuellement via « Run workflow » (onglet Actions).
+# depuis les artefacts du workflow, sous forme de fichiers zip), en poussant un
+# tag `v*`, en créant une Release dans GitHub (le .deb et les .exe y sont alors
+# joints), ou manuellement via « Run workflow » (onglet Actions).
 #
 # La version vient du tag : pousser v2.1.0 construit la version 2.1.0. Un
 # lancement manuel peut recevoir une version ; sinon celle des fichiers du dépôt.
@@ -19,12 +20,22 @@ on:
   push:
     tags:
       - "v*"
+  # Créer une Release dans l'interface GitHub lance aussi la construction, même
+  # si le tag n'a pas déclenché le workflow.
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
         description: "Version à construire (ex. 2.1.0). Vide = version des fichiers du dépôt."
         required: false
         default: ""
+
+# Un tag et sa Release déclenchent chacun le workflow : une seule construction
+# par référence (la plus récente remplace celle en cours).
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -194,9 +205,11 @@ jobs:
 
   # Uniquement sur un vrai tag `v*` : publie les paquets dans une Release GitHub
   # (liens permanents, contrairement aux artefacts qui expirent après 90 jours).
+  # Le .deb est publié dès que la construction Linux réussit, même si celle de
+  # Windows échoue : seuls les .exe manqueraient alors.
   release:
     needs: [build-linux, build-windows]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && needs.build-linux.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -207,6 +220,11 @@ jobs:
           merge-multiple: true
           path: dist
 
+      - name: Vérifier la présence du .deb
+        run: |
+          ls -l dist
+          test -n "$(ls dist/*.deb 2>/dev/null)"
+
       - name: Publier la Release GitHub
         uses: softprops/action-gh-release@v3.0.3
         with:
@@ -214,4 +232,4 @@ jobs:
             dist/*.deb
             dist/*.exe
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
