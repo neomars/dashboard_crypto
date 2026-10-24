@@ -1,13 +1,20 @@
 //! Configuration utilisateur (`config.ini`) : noms d'endpoint BGeometrics
-//! imposés (sinon détectés automatiquement).
+//! imposés (sinon détectés automatiquement) et derniers réglages du simulateur.
 //!
 //! Emplacement : variable `DASHBOARD_CRYPTO_CONFIG`, sinon
 //! `~/.config/dashboard-crypto/config.ini` sous Linux,
 //! `%APPDATA%\dashboard-crypto\config.ini` sous Windows (même fichier que les versions
 //! précédentes ; leurs anciennes sections Dune sont ignorées).
 
+use crate::simulator::{ExitFrequency, SimParams};
+use chrono::NaiveDate;
 use ini::Ini;
 use std::path::{Path, PathBuf};
+
+/// Section des derniers réglages du simulateur d'investissement.
+const SIMULATOR: &str = "SIMULATOR";
+/// Valeur de `end` qui suit la date du jour au lieu de figer celle de l'enregistrement.
+const END_TODAY: &str = "today";
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -96,6 +103,66 @@ impl Config {
         }
     }
 
+    /// Derniers réglages du simulateur, section `[SIMULATOR]`. Une valeur absente ou
+    /// illisible reprend celle par défaut ; des réglages incohérents (ex. début après la
+    /// fin, après une édition à la main) sont abandonnés en bloc.
+    pub fn simulator_params(&self) -> SimParams {
+        let ini = self.load();
+        let get = |key: &str| ini.get_from(Some(SIMULATOR), key).map(str::trim);
+        let number = |key: &str| {
+            get(key)
+                .and_then(|v| v.parse::<f64>().ok())
+                .filter(|v| v.is_finite())
+        };
+        let date = |key: &str| get(key).and_then(|v| NaiveDate::parse_from_str(v, "%Y-%m-%d").ok());
+
+        let default = SimParams::default();
+        let params = SimParams {
+            start: date("start").unwrap_or(default.start),
+            end: if get("end") == Some(END_TODAY) {
+                default.end
+            } else {
+                date("end").unwrap_or(default.end)
+            },
+            initial_capital: number("initial_capital").unwrap_or(default.initial_capital),
+            drop_pct: number("drop_pct").unwrap_or(default.drop_pct),
+            target_leverage: number("target_leverage").unwrap_or(default.target_leverage),
+            exit_frequency: get("exit_frequency")
+                .and_then(ExitFrequency::from_label)
+                .unwrap_or(default.exit_frequency),
+            exit_pct: number("exit_pct").unwrap_or(default.exit_pct),
+            ticker: get("ticker")
+                .filter(|t| !t.is_empty())
+                .map_or(default.ticker.clone(), str::to_string),
+        };
+        if params.validate().is_ok() {
+            params
+        } else {
+            default
+        }
+    }
+
+    /// Mémorise les réglages du simulateur. Une date de fin qui est le jour même est
+    /// enregistrée comme « aujourd'hui » : au prochain lancement elle suit le calendrier.
+    pub fn set_simulator_params(&self, p: &SimParams) -> Result<(), String> {
+        let end = if p.end >= SimParams::default().end {
+            END_TODAY.to_string()
+        } else {
+            p.end.format("%Y-%m-%d").to_string()
+        };
+        let mut ini = self.load();
+        ini.with_section(Some(SIMULATOR))
+            .set("ticker", p.ticker.trim())
+            .set("start", p.start.format("%Y-%m-%d").to_string())
+            .set("end", end)
+            .set("initial_capital", p.initial_capital.to_string())
+            .set("target_leverage", p.target_leverage.to_string())
+            .set("drop_pct", p.drop_pct.to_string())
+            .set("exit_frequency", p.exit_frequency.label())
+            .set("exit_pct", p.exit_pct.to_string());
+        self.save(&ini)
+    }
+
     /// Nom d'endpoint BGeometrics imposé pour une métrique : variable
     /// `BGEOMETRICS_<CLÉ>` > section `[BGEOMETRICS]` > vide (détection automatique).
     pub fn bgeometrics_endpoint(&self, key: &str) -> String {
@@ -172,6 +239,92 @@ mod tests {
         assert_eq!(cfg.sec_user_agent(), "Jean Dupont jean@exemple.fr");
         cfg.set_sec_user_agent("").unwrap();
         assert_eq!(cfg.sec_user_agent(), "");
+    }
+
+    fn ymd(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn simulator_params_default_without_file() {
+        let cfg = temp_config("sim-default");
+        let p = cfg.simulator_params();
+        assert_eq!(p.ticker, "BTC-USD");
+        assert_eq!(p.end, SimParams::default().end);
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn simulator_params_roundtrip() {
+        let cfg = temp_config("sim-roundtrip");
+        let saved = SimParams {
+            start: ymd("2019-03-15"),
+            end: ymd("2024-12-31"),
+            initial_capital: 25_000.5,
+            drop_pct: 7.5,
+            target_leverage: 3.0,
+            exit_frequency: ExitFrequency::Monthly,
+            exit_pct: 20.0,
+            ticker: " ETH-USD ".into(),
+        };
+        cfg.set_simulator_params(&saved).unwrap();
+        let loaded = cfg.simulator_params();
+        assert_eq!(loaded.ticker, "ETH-USD");
+        assert_eq!(loaded.start, saved.start);
+        assert_eq!(loaded.end, saved.end);
+        assert_eq!(loaded.initial_capital, 25_000.5);
+        assert_eq!(loaded.drop_pct, 7.5);
+        assert_eq!(loaded.target_leverage, 3.0);
+        assert_eq!(loaded.exit_frequency, ExitFrequency::Monthly);
+        assert_eq!(loaded.exit_pct, 20.0);
+    }
+
+    #[test]
+    fn simulator_end_today_follows_the_calendar() {
+        let cfg = temp_config("sim-today");
+        cfg.set_simulator_params(&SimParams::default()).unwrap();
+        let file = std::fs::read_to_string(cfg.path()).unwrap();
+        assert!(file.contains("end=today"), "{file}");
+        // Un fichier écrit un autre jour garde « today » : la fin est la date du jour.
+        assert_eq!(cfg.simulator_params().end, SimParams::default().end);
+    }
+
+    #[test]
+    fn simulator_params_keep_other_sections() {
+        let cfg = temp_config("sim-other");
+        cfg.set_sec_user_agent("jean@exemple.fr").unwrap();
+        cfg.set_simulator_params(&SimParams::default()).unwrap();
+        assert_eq!(cfg.sec_user_agent(), "jean@exemple.fr");
+    }
+
+    #[test]
+    fn simulator_params_ignore_unreadable_values() {
+        let cfg = temp_config("sim-bad");
+        std::fs::create_dir_all(cfg.path().parent().unwrap()).unwrap();
+        std::fs::write(
+            cfg.path(),
+            "[SIMULATOR]\nticker = SOL-USD\nstart = pas une date\ndrop_pct = NaN\ntarget_leverage = 4\nexit_frequency = Jamais\n",
+        )
+        .unwrap();
+        let p = cfg.simulator_params();
+        let default = SimParams::default();
+        assert_eq!(p.ticker, "SOL-USD");
+        assert_eq!(p.target_leverage, 4.0);
+        assert_eq!(p.start, default.start);
+        assert_eq!(p.drop_pct, default.drop_pct);
+        assert_eq!(p.exit_frequency, default.exit_frequency);
+    }
+
+    #[test]
+    fn simulator_params_inconsistent_file_falls_back_to_default() {
+        let cfg = temp_config("sim-inconsistent");
+        std::fs::create_dir_all(cfg.path().parent().unwrap()).unwrap();
+        std::fs::write(
+            cfg.path(),
+            "[SIMULATOR]\nticker = SOL-USD\nstart = 2025-01-01\nend = 2020-01-01\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.simulator_params().ticker, SimParams::default().ticker);
     }
 
     #[test]

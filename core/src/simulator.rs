@@ -1,6 +1,7 @@
 //! Simulateur d'investissement : stratégie de levier dynamique (x1 → xL
-//! lors d'une baisse de X % depuis le plus haut), puis sortie progressive
-//! du levier avec règle « no-loss » (pas de vente sous le prix d'achat).
+//! dès que le cours est à X % ou plus sous le plus haut atteint depuis le début
+//! de la période choisie), puis sortie progressive du levier avec règle
+//! « no-loss » (pas de vente sous le prix d'achat).
 
 use crate::data::halving_dates;
 use crate::figure::{dates, merge, two_rows, Figure};
@@ -36,6 +37,12 @@ impl ExitFrequency {
             Self::Monthly => "Mensuelle",
         }
     }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        [Self::Daily, Self::Weekly, Self::Monthly]
+            .into_iter()
+            .find(|f| f.label() == label)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +55,22 @@ pub struct SimParams {
     pub exit_frequency: ExitFrequency,
     pub exit_pct: f64,
     pub ticker: String,
+}
+
+/// Réglages proposés au premier lancement, tant qu'aucun n'est mémorisé.
+impl Default for SimParams {
+    fn default() -> Self {
+        Self {
+            start: NaiveDate::from_ymd_opt(2017, 1, 1).expect("date littérale valide"),
+            end: chrono::Local::now().date_naive(),
+            initial_capital: 10_000.0,
+            drop_pct: 10.0,
+            target_leverage: 2.0,
+            exit_frequency: ExitFrequency::Weekly,
+            exit_pct: 10.0,
+            ticker: "BTC-USD".into(),
+        }
+    }
 }
 
 impl SimParams {
@@ -175,8 +198,8 @@ pub fn simulate(prices: &[PricePoint], params: &SimParams) -> Result<Simulation,
     let start_price = first.close;
     let mut portfolio_value = params.initial_capital;
     let mut mode = Mode::X1;
-    let mut ath = start_price;
-    let mut waiting_for_recovery = false;
+    // Plus haut de la période choisie, mis à jour à chaque séance quel que soit le mode.
+    let mut period_high = start_price;
     let mut units = portfolio_value / start_price;
     let mut debt = 0.0;
 
@@ -204,14 +227,11 @@ pub fn simulate(prices: &[PricePoint], params: &SimParams) -> Result<Simulation,
 
     for p in prices {
         let (date, price) = (p.date, p.close);
+        period_high = period_high.max(price);
         match mode {
             Mode::X1 => {
-                if price > ath {
-                    ath = price;
-                    waiting_for_recovery = false;
-                }
                 portfolio_value = units * price;
-                if (price - ath) / ath <= drop_threshold && !waiting_for_recovery {
+                if (price - period_high) / period_high <= drop_threshold {
                     mode = Mode::XL;
                     closing_start = date;
                     steps_passed = 0;
@@ -286,10 +306,6 @@ pub fn simulate(prices: &[PricePoint], params: &SimParams) -> Result<Simulation,
                             price: money(price),
                             details: format!("Retour au mode X1 (100% investi en {unit})"),
                         });
-                        // Encore sous le seuil : attendre de repasser au-dessus avant un nouveau déclenchement.
-                        if (price - ath) / ath <= drop_threshold {
-                            waiting_for_recovery = true;
-                        }
                     }
                 }
             }
@@ -486,6 +502,38 @@ mod tests {
             .trades
             .iter()
             .any(|t| t.action.contains("Passage en Levier")));
+    }
+
+    fn leverage_entries(sim: &Simulation) -> usize {
+        sim.trades
+            .iter()
+            .filter(|t| t.action.contains("Passage en Levier"))
+            .count()
+    }
+
+    #[test]
+    fn high_reached_during_leverage_counts_for_next_trigger() {
+        // Levier à 80 (−20 % du plus haut), sommet à 160 pendant la phase levier, fin de
+        // phase à 140 (dixième étape journalière), puis 130 : −18,75 % du sommet à 160.
+        let mut p = vec![100.0, 80.0];
+        p.extend([160.0; 9]);
+        p.extend([140.0, 130.0]);
+        let sim = simulate(&prices(&p), &params(ExitFrequency::Daily)).unwrap();
+        assert!(sim.trades.iter().any(|t| t.action == "Fin de phase Levier"));
+        assert_eq!(leverage_entries(&sim), 2, "{:#?}", sim.trades);
+        let last = sim.history.last().unwrap();
+        assert_eq!(last.mode, Mode::XL);
+    }
+
+    #[test]
+    fn triggers_again_while_still_below_previous_high_after_exit() {
+        // Levier à 80, sortie complète à 85 : toujours 15 % sous le plus haut (100), la
+        // condition est remplie, le levier est donc réactivé sans attendre un nouveau sommet.
+        let mut p = vec![100.0, 80.0];
+        p.extend([85.0; 12]);
+        let sim = simulate(&prices(&p), &params(ExitFrequency::Daily)).unwrap();
+        assert!(sim.trades.iter().any(|t| t.action == "Fin de phase Levier"));
+        assert_eq!(leverage_entries(&sim), 2, "{:#?}", sim.trades);
     }
 
     #[test]
