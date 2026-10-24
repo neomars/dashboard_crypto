@@ -78,6 +78,19 @@ async fn run_simulation(
     Ok(view)
 }
 
+/// Réglages du simulateur mémorisés lors d'un précédent lancement (sinon ceux par défaut).
+#[tauri::command]
+fn get_simulator_params(state: State<'_, AppState>) -> SimParams {
+    state.data.config().simulator_params()
+}
+
+/// Mémorise les réglages du simulateur pour le prochain lancement.
+#[tauri::command]
+fn save_simulator_params(state: State<'_, AppState>, params: SimParams) -> Result<(), String> {
+    params.validate()?;
+    state.data.config().set_simulator_params(&params)
+}
+
 /// Exporte la dernière simulation (CSV ou PDF) à l'emplacement choisi.
 /// Renvoie le chemin enregistré, ou `None` si l'utilisateur a annulé.
 #[tauri::command]
@@ -223,6 +236,8 @@ fn main() {
             app_version,
             render_indicator,
             run_simulation,
+            get_simulator_params,
+            save_simulator_params,
             export_simulation,
             get_settings,
             save_endpoint,

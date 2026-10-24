@@ -24,7 +24,7 @@ Outils d'analyse : ils ne déclenchent aucun ordre et n'alimentent pas le moteur
 3.  **Indicateurs On-chain** : Moyenne mobile 200 semaines (SMA), Pi Cycle Top, et Prix Réalisé (Realized Price).
 4.  **Cycle de 4 ans (Bitcoin)** : Graphique polaire interactif divisé en 4 années (quadrants), permettant de suivre la progression du prix par rapport au dernier halving.
 5.  **SOPR (STH & LTH)** : Rentabilité des pièces dépensées par les détenteurs à court (STH) et long terme (LTH), via BGeometrics.
-6.  **Simulateur d'Investissement** : Simulation d'une stratégie de levier dynamique (x1 -> x2 lors d'une baisse de x%) avec sortie progressive personnalisable (journalière, hebdomadaire ou mensuelle). Tout ticker Yahoo Finance est accepté (BTC-USD par défaut, ETH-USD, AAPL...) : les textes (titre, légendes, résultats, journal, CSV, PDF) reprennent le nom de la valeur choisie, et les halvings ne sont tracés que pour le BTC.
+6.  **Simulateur d'Investissement** : Simulation d'une stratégie de levier dynamique (x1 -> x2 dès que le cours est à x% ou plus sous le plus haut atteint depuis le début de la période choisie, y compris pendant une phase de levier ; le levier se réactive tant que la condition est remplie) avec sortie progressive personnalisable (journalière, hebdomadaire ou mensuelle). Les réglages (dates, ticker, capital, levier, baisse déclencheur, sortie) sont mémorisés automatiquement dans `config.ini` (section `[SIMULATOR]`) dès qu'une simulation aboutit, et rechargés au lancement suivant. Une date de fin égale à la date du jour est enregistrée comme `end = today` et suit donc le calendrier. Tout ticker Yahoo Finance est accepté (BTC-USD par défaut, ETH-USD, AAPL...) : les textes (titre, légendes, résultats, journal, CSV, PDF) reprennent le nom de la valeur choisie, et les halvings ne sont tracés que pour le BTC.
 7.  **BTC Price & Volume** : Graphique en chandeliers japonais (candlestick) avec volume coloré (vert pour les hausses, rouge pour les baisses).
 8.  **Volatility Compression Ratio (VCR)** : Mesure de la compression de volatilité (ratio 30j/365j) pour anticiper les mouvements explosifs.
 9.  **Bitcoin Cycle Correction Analysis** : Analyse comparative de la sévérité des corrections (>15%) pour chaque cycle de halving depuis 2010. Identifie les sommets (Tops) et les creux (Bottoms) historiques.
@@ -596,7 +596,7 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
   - `indicators/` : un module par indicateur, chacun produisant une figure Plotly (JSON).
   - `simulator.rs` : simulateur de levier dynamique (règle « no-loss », liquidation, export CSV).
   - `pdf.rs` : rapport PDF de simulation.
-  - `config.rs` : lecture/écriture de `config.ini` (noms d'endpoint BGeometrics imposés, sections `[MSTR]`, `[SEC]` et `[PMI]`).
+  - `config.rs` : lecture/écriture de `config.ini` (noms d'endpoint BGeometrics imposés, sections `[MSTR]`, `[SEC]`, `[PMI]` et `[SIMULATOR]`, réglages mémorisés du simulateur).
   - `indicators.json` : liste des outils affichés dans la barre latérale.
   - `data/mstr_holdings.json` : BTC détenus et actions en circulation de Strategy (MSTR), avec leurs sources.
   - `data/ism_pmi.csv` : ISM Manufacturing PMI mensuel depuis janvier 2013.

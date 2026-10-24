@@ -63,7 +63,8 @@ const state = {
     mstr_mnav: { btc: true },
     pmi_btc: { sma: 24 },
   },
-  sim: null,
+  sim: null,       // réglages du simulateur, mémorisés dans config.ini
+  simSaved: null,  // dernière version enregistrée (JSON), pour n'écrire qu'après un changement
   signal: { base: "BTC", market: "spot", interval: "DAY_1", variant: "donchian" },
   bt: null,        // paramètres du backtest de la section Trading
   fibo: null,      // paramètres de la page Fibonacci à levier
@@ -358,11 +359,20 @@ const unitOf = (ticker) => {
   return (t.split("-")[0] || t).toUpperCase();
 };
 
-function renderSimulator(ind) {
-  const p = state.sim || (state.sim = {
-    start: "2017-01-01", end: today(), initial_capital: 10000, target_leverage: 2.0, ticker: "BTC-USD",
-    drop_pct: 10.0, exit_frequency: "Hebdomadaire", exit_pct: 10.0,
-  });
+async function renderSimulator(ind) {
+  // Réglages du dernier lancement (ou ceux par défaut), lus une seule fois par session.
+  if (!state.sim) {
+    main.replaceChildren(loading("Chargement des réglages…"));
+    try {
+      state.sim = await invoke("get_simulator_params");
+    } catch (e) {
+      main.replaceChildren(notice("error", `Impossible de lire les réglages du simulateur : ${e}`));
+      return;
+    }
+    state.simSaved = JSON.stringify(state.sim);
+    if (state.selection !== ind.id) return; // une autre page a été demandée entre-temps
+  }
+  const p = state.sim;
   const results = el("div");
   const run = debounce(() => runSimulation(ind, results), 400);
   const field = (label, input) => el("label", { class: "field" }, el("span", {}, label), input);
@@ -455,6 +465,17 @@ async function runSimulation(ind, box) {
   box.append(el("h2", {}, "📥 Exporter les résultats"), el("div", { class: "row" },
     el("button", { class: "btn", type: "button", onclick: () => exportAs("csv") }, "Télécharger CSV (Historique)"),
     el("button", { class: "btn", type: "button", onclick: () => exportAs("pdf") }, "Télécharger le rapport PDF")), status);
+
+  // Seuls les réglages qui ont donné une simulation sont retenus pour le prochain lancement
+  // (un ticker mal saisi, par exemple, ne l'est pas).
+  const snapshot = JSON.stringify(p);
+  if (snapshot === state.simSaved) return;
+  try {
+    await invoke("save_simulator_params", { params: p });
+    state.simSaved = snapshot;
+  } catch (e) {
+    if (id === state.requestId) box.append(notice("warning", `Réglages non enregistrés : ${e}`));
+  }
 }
 
 // ---------- Trading (moteur séparé des indicateurs de marché) ----------
