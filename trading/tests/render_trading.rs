@@ -23,8 +23,12 @@ fn d(s: &str) -> NaiveDate {
 /// Marché journalier déterministe : cycles de 4 ans (hausse puis baisse),
 /// volatilité d'environ 2 % par jour, mèches aléatoires.
 fn synthetic(start: &str, price0: f64, seed: u64) -> Vec<Bar> {
+    synthetic_until(start, price0, seed, Utc::now().timestamp_millis() - DAY_MS)
+}
+
+/// Comme `synthetic`, jusqu'à `end` (ms, exclu) au lieu d'hier.
+fn synthetic_until(start: &str, price0: f64, seed: u64, end: i64) -> Vec<Bar> {
     let t0 = date_ms(d(start));
-    let end = Utc::now().timestamp_millis() - DAY_MS;
     let mut state = seed;
     let mut uniform = move || {
         state ^= state << 13;
@@ -268,10 +272,10 @@ async fn backtest_reports_missing_history() {
     }
 }
 
-fn accumulation_params(weighting: Weighting, start: &str) -> AccumulationParams {
+fn accumulation_params(weighting: Weighting, start: &str, end: NaiveDate) -> AccumulationParams {
     AccumulationParams {
         start: d(start),
-        end: Utc::now().date_naive(),
+        end,
         base_amount: 100.0,
         frequency: Frequency::Weekly,
         weekday: 1,
@@ -288,11 +292,14 @@ fn accumulation_params(weighting: Weighting, start: &str) -> AccumulationParams 
 
 #[tokio::test]
 async fn accumulation_page_renders_from_cached_data() {
-    let today = Utc::now().date_naive();
+    // Date figée, pas l'horloge : les achats tombent le lundi et le dernier MVRV date de
+    // 8 jours, donc le nombre d'achats de secours (lundis des 3 derniers jours) dépend du
+    // jour de la semaine où le test tourne. Un mercredi en compte un.
+    let today = d("2026-10-21");
     let feed = MarketFeed::new();
     let btc = Instrument::new("BTC", Market::Spot).unwrap();
-    let bars = synthetic("2017-01-01", 1000.0, 0x1234_5678_9ABC_DEF1);
-    let first = accumulation_params(Weighting::MvrvTiers, "2018-01-01");
+    let bars = synthetic_until("2017-01-01", 1000.0, 0x1234_5678_9ABC_DEF1, date_ms(today));
+    let first = accumulation_params(Weighting::MvrvTiers, "2018-01-01", today);
     feed.seed_bars(&btc, Interval::D1, first.data_start(), bars.clone());
     // MVRV synthétique : cycle de 4 ans entre 0,8 et 3,5. L'historique s'arrête
     // 150 jours avant aujourd'hui, les données récentes 8 jours avant (retard
@@ -319,7 +326,7 @@ async fn accumulation_page_renders_from_cached_data() {
         Weighting::MvrvInverse,
         Weighting::PriceMa200,
     ] {
-        let params = accumulation_params(weighting, "2018-01-01");
+        let params = accumulation_params(weighting, "2018-01-01", today);
         let acc = accumulation::run_with_feed(&feed, &params, today)
             .await
             .unwrap_or_else(|e| panic!("{weighting:?} : {e}"));
@@ -395,7 +402,7 @@ async fn accumulation_without_any_mvrv_falls_back_to_the_average() {
     let today = Utc::now().date_naive();
     let feed = MarketFeed::new();
     let btc = Instrument::new("BTC", Market::Spot).unwrap();
-    let params = accumulation_params(Weighting::MvrvInverse, "2019-01-01");
+    let params = accumulation_params(Weighting::MvrvInverse, "2019-01-01", today);
     feed.seed_bars(
         &btc,
         Interval::D1,
