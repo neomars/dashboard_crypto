@@ -20,6 +20,7 @@ mod onchain;
 pub mod pmi_btc;
 mod realized_cap_utxo;
 mod sopr;
+mod top_traders;
 mod vcr;
 mod volume;
 
@@ -28,7 +29,7 @@ pub use bmsb::{calculate_bmsb, Regime};
 pub use net_realized_pnl::{bubble_sizes, weekly_net_realized, WeeklyPnl};
 pub use vcr::annualized_vol;
 
-pub const IDS: [&str; 16] = [
+pub const IDS: [&str; 17] = [
     "fear_greed",
     "halving",
     "onchain",
@@ -40,6 +41,7 @@ pub const IDS: [&str; 16] = [
     "bmi",
     "bmsb",
     "long_short",
+    "top_traders",
     "cycle_roi",
     "realized_cap_utxo",
     "net_realized_pnl",
@@ -131,6 +133,7 @@ pub async fn render(
         "bmi" => bmi::render(data).await,
         "bmsb" => bmsb::render(data, params).await,
         "long_short" => long_short::render(data, params).await,
+        "top_traders" => top_traders::render(data, params).await,
         "cycle_roi" => cycle_roi::render(data).await,
         "realized_cap_utxo" => realized_cap_utxo::render(data).await,
         "net_realized_pnl" => net_realized_pnl::render(data).await,

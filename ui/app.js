@@ -22,10 +22,16 @@ const PLOT_CONFIG = { responsive: true, displaylogo: false };
 
 const PAIRS = ["BTC", "ETH", "SOL", "DOGE", "AVAX", "LINK"];
 const LONG_SHORT_MODES = ["Long vs Short", "Ratio Long/Short", "Open Interest"];
+// Indicateur « Top Traders » : monnaies proposées (contrats perpétuels USDT de Binance) ; toute
+// autre monnaie se saisit via « Autre… ». Périodes : intervalles de l'API Binance.
+const TOP_TRADER_COINS = ["BTC", "ETH", "BNB", "SOL", "XRP", "DOGE", "ADA", "TRX", "AVAX", "LINK", "LTC"];
+const TOP_TRADER_PERIODS = [["5m", "5 minutes"], ["15m", "15 minutes"], ["30m", "30 minutes"], ["1h", "1 heure"],
+  ["2h", "2 heures"], ["4h", "4 heures"], ["6h", "6 heures"], ["12h", "12 heures"], ["1d", "1 jour"]];
 const SOURCES = [
   ["Yahoo Finance", "https://finance.yahoo.com", "prix, volumes et historiques (BTC et autres tickers)"],
   ["BGeometrics", "https://bitcoin-data.com", "métriques on-chain : SOPR, NRPL, HODL waves, ETF (gratuit : 8 requêtes/heure, 15/jour, 4 dernières années ; données gardées 12 h sur le disque)"],
   ["OKX", "https://www.okx.com", "positions long/short et open interest des contrats perpétuels"],
+  ["Binance", "https://www.binance.com", "ratio long/short des meilleurs traders (comptes) des contrats perpétuels USDT, sur les 30 derniers jours seulement"],
   ["alternative.me", "https://alternative.me/crypto/fear-and-greed-index/", "indice Fear & Greed"],
   ["mempool.space", "https://mempool.space", "hauteur de bloc (estimation du prochain halving)"],
   ["Bitcoin-Dataset (GitHub)", "https://github.com/Yrzxiong/Bitcoin-Dataset", "historique du prix BTC 2010-2018"],
@@ -60,6 +66,7 @@ const state = {
   params: {        // paramètres saisis par indicateur
     bmsb: { sma: 20, ema: 21 },
     long_short: { pair: "BTC", mode: "Long vs Short" },
+    top_traders: { coin: "BTC", period: "4h" },
     mstr_mnav: { btc: true },
     pmi_btc: { sma: 24 },
   },
@@ -295,6 +302,31 @@ function indicatorControls(ind, refresh) {
         onchange: () => { params.mode = m; refresh(); } }), " ", m)));
     return el("div", { class: "controls" }, el("label", { class: "field" }, el("span", {}, "Paire"), pair),
       el("div", { class: "field" }, el("span", {}, "Mode d'affichage"), modes));
+  }
+  if (ind.id === "top_traders") {
+    // « Autre… » affiche un champ où saisir n'importe quel contrat perpétuel USDT de Binance (ARB, 1000PEPE...).
+    const OTHER = "other";
+    const listed = TOP_TRADER_COINS.includes(params.coin);
+    const custom = el("input", { type: "text", value: listed ? "" : params.coin, size: 12, spellcheck: "false",
+      placeholder: "ex. ARB, 1000PEPE", "aria-label": "Autre monnaie", hidden: listed,
+      onchange: (e) => {
+        const coin = e.target.value.trim().toUpperCase();
+        e.target.value = coin;
+        if (coin) { params.coin = coin; refresh(); }
+      } });
+    const coin = el("select", { "aria-label": "Monnaie", onchange: (e) => {
+        const other = e.target.value === OTHER;
+        custom.hidden = !other;
+        if (other) custom.focus();
+        else { params.coin = e.target.value; refresh(); }
+      } },
+      TOP_TRADER_COINS.map((c) => el("option", { value: c, selected: c === params.coin }, c)),
+      el("option", { value: OTHER, selected: !listed }, "Autre…"));
+    const period = el("select", { "aria-label": "Période", onchange: (e) => { params.period = e.target.value; refresh(); } },
+      TOP_TRADER_PERIODS.map(([code, label]) => el("option", { value: code, selected: code === params.period }, label)));
+    return el("div", { class: "controls" },
+      el("div", { class: "field" }, el("span", {}, "Monnaie"), el("div", { class: "row" }, coin, custom)),
+      el("label", { class: "field" }, el("span", {}, "Période"), period));
   }
   if (ind.id === "pmi_btc") {
     const out = el("output", {}, params.sma);

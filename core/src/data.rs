@@ -3,6 +3,7 @@
 //! BGeometrics dont l'offre gratuite limite le nombre de requêtes.
 
 use crate::bgeometrics::{self, Reply};
+use crate::binance::{self, TopTraderPoint};
 use crate::config::Config;
 use crate::okx;
 use crate::series::{Candle, PricePoint};
@@ -34,6 +35,8 @@ const SEC_USER_AGENT: &str = concat!(
 pub const ISM_FEED_URL: &str =
     "https://raw.githubusercontent.com/sofiaverma06/ism-feed/main/ism_history.csv";
 const HOUR: Duration = Duration::from_secs(3600);
+/// Binance actualise ses ratios long/short toutes les 5 minutes (période la plus fine).
+const BINANCE_TTL: Duration = Duration::from_secs(300);
 /// Les métriques BGeometrics sont mises à jour une fois par jour.
 const BGEOMETRICS_DISK_TTL: i64 = 12 * 3600;
 
@@ -85,6 +88,7 @@ pub struct DataProvider {
     config: Config,
     cache: Mutex<HashMap<String, CacheEntry>>,
     cache_dir: Option<PathBuf>,
+    binance_url: String,
 }
 
 /// Série BGeometrics récupérée (ou relue depuis le cache disque).
@@ -123,12 +127,20 @@ impl DataProvider {
             config,
             cache: Mutex::new(HashMap::new()),
             cache_dir: dirs::cache_dir().map(|d| d.join("dashboard-crypto")),
+            binance_url: binance::BASE_URL.to_string(),
         }
     }
 
     /// Utilise un autre dossier pour le cache disque (tests).
     pub fn with_cache_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.cache_dir = Some(dir.into());
+        self
+    }
+
+    /// Interroge un autre serveur que Binance (tests avec un faux serveur local).
+    #[doc(hidden)]
+    pub fn with_binance_url(mut self, url: impl Into<String>) -> Self {
+        self.binance_url = url.into();
         self
     }
 
@@ -200,6 +212,12 @@ impl DataProvider {
     #[doc(hidden)]
     pub fn seed_okx(&self, kind: &str, pair: &str, rows: Vec<(NaiveDate, Vec<f64>)>) {
         self.seed(format!("okx:{kind}:{}", pair.to_uppercase()), rows);
+    }
+
+    #[doc(hidden)]
+    pub fn seed_binance_top_traders(&self, coin: &str, period: &str, points: Vec<TopTraderPoint>) {
+        let symbol = binance::symbol(coin).expect("monnaie valide");
+        self.seed(binance_key(&symbol, period), points);
     }
 
     /// Pré-remplit le cache (tests hors ligne) : CSV de l'ISM PMI.
@@ -555,6 +573,69 @@ impl DataProvider {
         })
         .await
     }
+
+    /// Ratio long/short des « top traders » (comptes) du contrat perpétuel
+    /// Binance `<MONNAIE>USDT` : `period` est un intervalle de l'API (`4h`, `1d`...).
+    /// Binance ne publie que les 30 derniers jours : les pages de 500 points
+    /// sont remontées dans le temps jusqu'à épuisement (une seule requête dès 2 h).
+    pub async fn binance_top_traders(
+        &self,
+        coin: &str,
+        period: &str,
+    ) -> Result<Arc<Vec<TopTraderPoint>>, String> {
+        let symbol = binance::symbol(coin)?;
+        self.cached(&binance_key(&symbol, period), BINANCE_TTL, || async {
+            let floor = binance::window_floor(Utc::now().timestamp_millis());
+            let mut all: Vec<TopTraderPoint> = Vec::new();
+            let mut end: Option<i64> = None;
+            for _ in 0..binance::MAX_PAGES {
+                let mut query = vec![
+                    ("symbol", symbol.clone()),
+                    ("period", period.to_string()),
+                    ("limit", binance::PAGE_SIZE.to_string()),
+                ];
+                if let Some(e) = end {
+                    query.push(("endTime", e.to_string()));
+                }
+                let resp = self
+                    .http
+                    .get(&self.binance_url)
+                    .query(&query)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Erreur réseau Binance : {e}"))?;
+                let status = resp.status().as_u16();
+                // Le corps d'une erreur n'est pas toujours du JSON (blocage, proxy...).
+                let text = resp
+                    .text()
+                    .await
+                    .map_err(|e| format!("Réponse Binance illisible (HTTP {status}) : {e}"))?;
+                let body: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+                let page = binance::parse_points(status, &body, &symbol)?;
+                let Some(oldest) = page.first().map(|p| p.ts) else {
+                    break;
+                };
+                let count = page.len();
+                all.extend(page);
+                // Sans progrès vers le passé (paramètre ignoré), on s'arrête plutôt que de boucler.
+                match binance::next_end(oldest, count, floor) {
+                    Some(e) if end.is_none_or(|previous| e < previous) => end = Some(e),
+                    _ => break,
+                }
+            }
+            all.sort_by_key(|p| p.ts);
+            all.dedup_by_key(|p| p.ts);
+            if all.is_empty() {
+                return Err(format!("Aucune donnée Binance pour {symbol}."));
+            }
+            Ok(all)
+        })
+        .await
+    }
+}
+
+fn binance_key(symbol: &str, period: &str) -> String {
+    format!("binance:top-accounts:{symbol}:{period}")
 }
 
 /// Encode un segment d'URL (ex. `GC=F` → `GC%3DF`).
