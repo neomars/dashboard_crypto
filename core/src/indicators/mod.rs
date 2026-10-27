@@ -21,7 +21,6 @@ pub mod pmi_btc;
 mod realized_cap_utxo;
 mod sopr;
 mod top_traders;
-mod top_traders_signal;
 mod vcr;
 mod volume;
 

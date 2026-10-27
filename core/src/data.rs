@@ -604,7 +604,7 @@ impl DataProvider {
     }
 
     /// Cours (bougies) du contrat perpétuel Binance `<MONNAIE>USDT` à la période
-    /// donnée, du début des relevés du ratio (avec la marge de calcul du cours)
+    /// donnée, du début des relevés du ratio (avec une marge)
     /// jusqu'à la bougie en cours. Les pages sont lues vers l'avant jusqu'à elle,
     /// quelle que soit leur taille. Si on n'y parvient pas, c'est une erreur : des
     /// bougies qui s'arrêtent avant la fin donneraient des cours périmés.

@@ -95,9 +95,8 @@ fn current_period_start() -> i64 {
     chrono::Utc::now().timestamp_millis() / TOP_TRADER_PERIOD_MS * TOP_TRADER_PERIOD_MS
 }
 
-/// Ratio de comptes des top traders Binance : un relevé toutes les 4 h sur 30 jours, calme autour
-/// de 1,5 (l'oscillation reste sous le plancher de 0,05 : aucun extrême), puis le dernier qui
-/// s'envole à exactement 2,375 (70,4 % de comptes long).
+/// Ratio de comptes des top traders Binance : un relevé toutes les 4 h sur 30 jours, autour de
+/// 1,5, le dernier valant exactement 2,375 (70,4 % de comptes long).
 fn top_trader_points(end: i64, phase: f64) -> Vec<TopTraderPoint> {
     (0..180)
         .map(|i| {
@@ -117,16 +116,11 @@ fn top_trader_points(end: i64, phase: f64) -> Vec<TopTraderPoint> {
 }
 
 /// Bougies de 4 h du même contrat, de 3 jours avant le premier relevé à la bougie en cours : le
-/// cours monte de 10 par bougie depuis 80 000 ; la dernière bougie terminée avant le dernier
-/// relevé clôture à 76 000 (sous sa moyenne) et la bougie en cours à 77 000.
+/// cours monte de 10 par bougie depuis 80 000.
 fn top_trader_klines(end: i64) -> Vec<Kline> {
     (0..=197)
         .map(|j| {
-            let close = match j {
-                197 => 77_000.0,
-                196 => 76_000.0,
-                _ => 80_000.0 + 10.0 * j as f64,
-            };
+            let close = 80_000.0 + 10.0 * j as f64;
             Kline {
                 ts: end - (197 - j) * TOP_TRADER_PERIOD_MS,
                 open: close - 5.0,
@@ -379,10 +373,10 @@ fn metrics_of(out: &indicators::IndicatorOutput) -> Vec<(&str, &str)> {
 }
 
 #[tokio::test]
-async fn top_traders_price_signal_coin_period_and_errors() {
+async fn top_traders_price_above_the_plain_ratio_coin_period_and_errors() {
     let data = provider();
 
-    // Sans réglage : BTC, période de 4 heures, lecture contrarienne.
+    // Sans réglage : BTC, période de 4 heures.
     let out = indicators::render("top_traders", &Value::Null, &data)
         .await
         .unwrap();
@@ -391,60 +385,30 @@ async fn top_traders_price_signal_coin_period_and_errors() {
         title.starts_with("BTCUSDT") && title.contains("4 heures"),
         "{title}"
     );
-    // Le cours (chandeliers) est en haut, le ratio dans le panneau du bas.
+    // Le cours (chandeliers) en haut, le ratio tel quel dans le panneau du bas : rien d'autre.
     let traces = &out.figure.data;
+    assert_eq!(traces.len(), 2);
     assert_eq!(traces[0]["type"], "candlestick");
     // Du premier relevé à la bougie en cours : les 3 jours de marge ne sont pas affichés.
     assert_eq!(traces[0]["x"].as_array().unwrap().len(), 180);
-    let ratio = traces
-        .iter()
-        .find(|t| t["name"] == "Ratio top traders")
-        .unwrap();
-    assert_eq!(ratio["yaxis"], "y2");
-    // Foule long (2,375 contre ~1,5) alors que le cours connu (76 000) est sous sa moyenne : vente.
-    let sell = traces.iter().find(|t| t["name"] == "Vente").unwrap();
-    assert_eq!(sell["y"], json!([76_000.0]));
-    assert!(!traces.iter().any(|t| t["name"] == "Achat"));
+    assert_eq!(traces[1]["name"], "Ratio Long/Short (top traders)");
+    assert_eq!(traces[1]["yaxis"], "y2");
+    assert_eq!(traces[1]["y"].as_array().unwrap().len(), 180);
     assert_eq!(
         metrics_of(&out),
         [
-            ("Cours BTCUSDT", "77\u{202F}000,0"),
             ("Ratio Long/Short actuel", "2,3750"),
             ("Comptes long", "70,4 %"),
             ("Comptes short", "29,6 %"),
-            ("Signal", "🔴 VENTE"),
         ]
     );
+    // Seule la note sur les 30 jours de Binance : ni signal ni lecture.
     let notices = serde_json::to_value(&out.notices).unwrap();
-    assert_eq!(notices.as_array().unwrap().len(), 3);
+    assert_eq!(notices.as_array().unwrap().len(), 1);
     assert_eq!(notices[0]["level"], "info");
     let text = notices[0]["text"].as_str().unwrap();
     assert!(
         text.contains("30 derniers jours") && text.contains("180 relevés"),
-        "{text}"
-    );
-    assert_eq!(notices[1]["level"], "info");
-    let text = notices[1]["text"].as_str().unwrap();
-    assert!(
-        text.starts_with(
-            "Lecture contrarienne : les top traders sont bien plus long que d'habitude"
-        ) && text.contains("le cours est sous sa moyenne des 2 derniers jours")
-            && text.contains("VENTE.\nDernier signal : VENTE le "),
-        "{text}"
-    );
-    assert_eq!(notices[2]["level"], "warning");
-    assert!(notices[2]["text"].as_str().unwrap().contains("non validé"));
-
-    // L'autre lecture de la même situation : les top traders achètent la baisse.
-    let out = indicators::render("top_traders", &json!({"reading": "smart_money"}), &data)
-        .await
-        .unwrap();
-    assert_eq!(metrics_of(&out).last(), Some(&("Signal", "🟢 ACHAT")));
-    let notices = serde_json::to_value(&out.notices).unwrap();
-    let text = notices[1]["text"].as_str().unwrap();
-    assert!(
-        text.starts_with("Lecture smart money :")
-            && text.contains("ils achètent la baisse : ACHAT."),
         "{text}"
     );
 
@@ -466,13 +430,6 @@ async fn top_traders_price_signal_coin_period_and_errors() {
         .await
         .unwrap_err();
     assert!(err.contains("Monnaie invalide"), "{err}");
-    let err = indicators::render("top_traders", &json!({"reading": "hasard"}), &data)
-        .await
-        .unwrap_err();
-    assert!(
-        err.contains("Lecture inconnue") && err.contains("hasard"),
-        "{err}"
-    );
 }
 
 #[tokio::test]

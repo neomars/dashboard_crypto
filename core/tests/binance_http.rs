@@ -546,30 +546,25 @@ fn warnings(out: &indicators::IndicatorOutput) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn the_indicator_shows_the_price_and_a_signal_end_to_end() {
+async fn the_indicator_shows_the_price_above_the_plain_ratio_end_to_end() {
     let fake = serving(history(4 * HOUR_MS));
     let params = json!({"coin": "eth", "period": "4h"});
     let out = indicators::render("top_traders", &params, &provider(&fake))
         .await
         .unwrap();
 
-    // Cours en haut ; ratio et bougies constants : positionnement normal, donc aucun signal.
+    // Le cours en haut, le ratio en dessous : rien d'autre, ni signal ni avertissement.
+    assert_eq!(out.figure.data.len(), 2);
     assert_eq!(out.figure.data[0]["type"], "candlestick");
+    assert_eq!(out.figure.data[1]["name"], "Ratio Long/Short (top traders)");
+    assert_eq!(out.figure.data[1]["yaxis"], "y2");
     assert_eq!(
         labels(&out),
-        [
-            "Cours ETHUSDT",
-            "Ratio Long/Short actuel",
-            "Comptes long",
-            "Comptes short",
-            "Signal"
-        ]
+        ["Ratio Long/Short actuel", "Comptes long", "Comptes short"]
     );
-    assert_eq!(out.metrics.last().unwrap().value, "⚪ NEUTRE");
     assert_eq!(fake.ratio_requests().len(), 1);
     assert_eq!(fake.kline_requests().len(), 1);
-    // Seul l'avertissement permanent (signal non validé) est affiché.
-    assert_eq!(warnings(&out).len(), 1);
+    assert!(warnings(&out).is_empty(), "{:?}", warnings(&out));
 }
 
 #[tokio::test]
@@ -587,9 +582,9 @@ async fn the_ratio_alone_is_shown_when_the_price_is_unavailable() {
         .await
         .unwrap();
 
-    // Le ratio reste affiché, sans cours ni signal, avec la raison.
+    // Le ratio reste affiché, seul et au même format, avec la raison de l'absence du cours.
     assert_eq!(out.figure.data.len(), 1);
-    assert_eq!(out.figure.data[0]["name"], "Ratio top traders");
+    assert_eq!(out.figure.data[0]["name"], "Ratio Long/Short (top traders)");
     assert_eq!(out.figure.data[0]["yaxis"], "y");
     assert_eq!(
         labels(&out),
@@ -598,50 +593,7 @@ async fn the_ratio_alone_is_shown_when_the_price_is_unavailable() {
     let warnings = warnings(&out);
     assert_eq!(warnings.len(), 1);
     assert!(
-        warnings[0].contains("Cours indisponible")
-            && warnings[0].contains("451")
-            && warnings[0].contains("sans signal"),
-        "{}",
-        warnings[0]
-    );
-}
-
-#[tokio::test]
-async fn the_ratio_alone_is_shown_when_no_candle_precedes_the_points() {
-    let ratio = history(4 * HOUR_MS);
-    let fake = fake_binance(move |path, query| {
-        if path.ends_with("/klines") {
-            // Une seule bougie, ouverte demain : aucune n'est terminée au moment des relevés.
-            let tomorrow = chrono::Utc::now().timestamp_millis() + DAY_MS;
-            let row = json!([
-                tomorrow,
-                "1",
-                "1",
-                "1",
-                "1",
-                "0",
-                tomorrow + 1,
-                "0",
-                0,
-                "0",
-                "0",
-                "0"
-            ]);
-            (200, json!([row]).to_string())
-        } else {
-            ratio_page(&ratio, query)
-        }
-    });
-    let out = indicators::render("top_traders", &json!({}), &provider(&fake))
-        .await
-        .unwrap();
-
-    assert_eq!(out.figure.data.len(), 1);
-    assert_eq!(labels(&out).len(), 3);
-    let warnings = warnings(&out);
-    assert_eq!(warnings.len(), 1);
-    assert!(
-        warnings[0].contains("Aucune bougie Binance ne précède les relevés"),
+        warnings[0].contains("Cours indisponible") && warnings[0].contains("451"),
         "{}",
         warnings[0]
     );

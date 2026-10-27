@@ -27,9 +27,6 @@ const LONG_SHORT_MODES = ["Long vs Short", "Ratio Long/Short", "Open Interest"];
 const TOP_TRADER_COINS = ["BTC", "ETH", "BNB", "SOL", "XRP", "DOGE", "ADA", "TRX", "AVAX", "LINK", "LTC"];
 const TOP_TRADER_PERIODS = [["5m", "5 minutes"], ["15m", "15 minutes"], ["30m", "30 minutes"], ["1h", "1 heure"],
   ["2h", "2 heures"], ["4h", "4 heures"], ["6h", "6 heures"], ["12h", "12 heures"], ["1d", "1 jour"]];
-// Deux lectures opposées de la même situation (positionnement extrême qui va contre le cours).
-const TOP_TRADER_READINGS = [["contrarian", "Contrarien : la foule est trop positionnée"],
-  ["smart_money", "Smart money : suivre les top traders"]];
 const SOURCES = [
   ["Yahoo Finance", "https://finance.yahoo.com", "prix, volumes et historiques (BTC et autres tickers)"],
   ["BGeometrics", "https://bitcoin-data.com", "métriques on-chain : SOPR, NRPL, HODL waves, ETF (gratuit : 8 requêtes/heure, 15/jour, 4 dernières années ; données gardées 12 h sur le disque)"],
@@ -69,7 +66,7 @@ const state = {
   params: {        // paramètres saisis par indicateur
     bmsb: { sma: 20, ema: 21 },
     long_short: { pair: "BTC", mode: "Long vs Short" },
-    top_traders: { coin: "BTC", period: "4h", reading: "contrarian" },
+    top_traders: { coin: "BTC", period: "4h" },
     mstr_mnav: { btc: true },
     pmi_btc: { sma: 24 },
   },
@@ -327,12 +324,9 @@ function indicatorControls(ind, refresh) {
       el("option", { value: OTHER, selected: !listed }, "Autre…"));
     const period = el("select", { "aria-label": "Période", onchange: (e) => { params.period = e.target.value; refresh(); } },
       TOP_TRADER_PERIODS.map(([code, label]) => el("option", { value: code, selected: code === params.period }, label)));
-    const reading = el("select", { "aria-label": "Lecture du signal", onchange: (e) => { params.reading = e.target.value; refresh(); } },
-      TOP_TRADER_READINGS.map(([code, label]) => el("option", { value: code, selected: code === params.reading }, label)));
     return el("div", { class: "controls" },
       el("div", { class: "field" }, el("span", {}, "Monnaie"), el("div", { class: "row" }, coin, custom)),
-      el("label", { class: "field" }, el("span", {}, "Période"), period),
-      el("label", { class: "field" }, el("span", {}, "Lecture du signal"), reading));
+      el("label", { class: "field" }, el("span", {}, "Période"), period));
   }
   if (ind.id === "pmi_btc") {
     const out = el("output", {}, params.sma);

@@ -25,9 +25,9 @@ pub const KLINES_PAGE_SIZE: usize = 1500;
 /// Garde-fou : 7 pages de 1 500 bougies suffisent pour 33 jours en bougies de 5 minutes, et 20
 /// pages couvrent encore des pages de 500.
 pub const KLINES_MAX_PAGES: usize = 20;
-/// Jours de bougies demandés avant le premier relevé du ratio : au moins une
-/// bougie terminée précède ce relevé (une période dure au plus un jour), pour que
-/// chaque relevé ait un cours connu.
+/// Jours de bougies demandés en plus des 30 jours du ratio : le premier relevé
+/// peut remonter un peu au-delà (jusqu'à une période, soit un jour au plus), et
+/// le cours doit commencer avec lui.
 pub const KLINES_MARGIN_DAYS: i64 = 3;
 const DAY_MS: i64 = 86_400_000;
 
@@ -185,7 +185,8 @@ pub fn window_floor(now_ms: i64) -> i64 {
     now_ms - (HISTORY_DAYS - 1) * DAY_MS
 }
 
-/// Première bougie demandée : les jours du ratio, plus la marge de calcul du cours.
+/// Première bougie demandée : les jours du ratio, plus une marge (l'indicateur n'affiche les
+/// bougies qu'à partir du premier relevé).
 pub fn kline_window_start(now_ms: i64) -> i64 {
     now_ms - (HISTORY_DAYS + KLINES_MARGIN_DAYS) * DAY_MS
 }
