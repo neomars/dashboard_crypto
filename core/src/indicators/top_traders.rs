@@ -2,8 +2,8 @@
 //! dessous, ratio long/short des « top traders » (les 20 % de comptes ayant le plus de marge),
 //! comme sur CoinGlass (panneau « Meilleurs traders longs/courts (Comptes) »).
 
-use super::{param_str, IndicatorOutput, Level, Metric};
-use crate::binance::{self, Kline, TopTraderPoint};
+use super::{param_str, param_u64, IndicatorOutput, Level, Metric};
+use crate::binance::{self, ArchiveReport, Kline, TopTraderHistory, TopTraderPoint};
 use crate::data::DataProvider;
 use crate::figure::{merge, two_rows_shared_x, Figure};
 use chrono::DateTime;
@@ -97,24 +97,64 @@ pub(crate) fn build_figure(
     fig
 }
 
+/// Note sur l'étendue de l'historique et sur l'origine de ses relevés.
+fn coverage_note(history: &TopTraderHistory, period_label: &str, first: i64, last: i64) -> String {
+    let count = history.points.len();
+    let (from, to) = (time(first, "%d/%m/%Y %H:%M"), time(last, "%d/%m/%Y %H:%M"));
+    match &history.archive {
+        ArchiveReport::Added {
+            added, gap, common, ..
+        } => format!(
+            "{count} relevés (période de {period_label}), du {from} au {to} UTC : les {} derniers viennent de l'API de Binance, qui ne conserve que {} jours, les {added} plus anciens de son archive publique (data.binance.vision), dont la concordance avec l'API est vérifiée (écart médian de {} sur {common} relevés communs).",
+            count - added,
+            binance::HISTORY_DAYS,
+            percent(*gap)
+        ),
+        report => {
+            let mut note = format!(
+                "Binance ne publie que les {} derniers jours pour ce ratio : {count} relevés (période de {period_label}), du {from} au {to} UTC.",
+                binance::HISTORY_DAYS
+            );
+            if *report == ArchiveReport::Nothing {
+                note.push_str(" Son archive publique n'a rien de plus ancien pour ce contrat.");
+            }
+            note
+        }
+    }
+}
+
 pub async fn render(data: &DataProvider, params: &Value) -> Result<IndicatorOutput, String> {
     let period = param_str(params, "period", "4h");
     let period_label =
         binance::period_label(period).ok_or_else(|| format!("Période inconnue : {period}"))?;
+    let period_ms =
+        binance::period_ms(period).ok_or_else(|| format!("Période inconnue : {period}"))?;
     let symbol = binance::symbol(param_str(params, "coin", "BTC"))?;
+    // Sans réglage : les 30 jours de l'API. L'archive de Binance ne se lit que si on la demande.
+    let requested = param_u64(
+        params,
+        "days",
+        binance::HISTORY_DAYS as u64,
+        1,
+        binance::MAX_HISTORY_DAYS as u64,
+    ) as i64;
+    let days = binance::history_days(requested, period_ms);
 
-    let points = data.binance_top_traders(&symbol, period).await?;
+    let history = data
+        .binance_top_traders_history(&symbol, period, days)
+        .await?;
+    let points = &history.points;
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return Err(format!("Aucune donnée Binance pour {symbol}."));
     };
 
     // Le cours est la moitié de l'indicateur, mais s'il manque, le ratio reste affiché seul.
-    let klines = data.binance_klines(&symbol, period).await;
+    let klines = data.binance_klines(&symbol, period, days).await;
     let candles = klines
         .as_deref()
         .map_or(&[][..], |k| candles_from(k, first.ts));
 
-    let mut out = IndicatorOutput::from(build_figure(&points, candles, &symbol, period_label));
+    let mut out = IndicatorOutput::from(build_figure(points, candles, &symbol, period_label));
     out.metrics = vec![
         Metric {
             label: "Ratio Long/Short actuel".into(),
@@ -131,14 +171,42 @@ pub async fn render(data: &DataProvider, params: &Value) -> Result<IndicatorOutp
     ];
     out = out.with_notice(
         Level::Info,
-        format!(
-            "Binance ne publie que les {} derniers jours pour ce ratio : {} relevés (période de {period_label}), du {} au {} UTC.",
-            binance::HISTORY_DAYS,
-            points.len(),
-            time(first.ts, "%d/%m/%Y %H:%M"),
-            time(last.ts, "%d/%m/%Y %H:%M"),
-        ),
+        coverage_note(&history, period_label, first.ts, last.ts),
     );
+    if days < requested {
+        out = out.with_notice(
+            Level::Info,
+            format!(
+                "Historique limité à {days} jours pour la période de {period_label} (au plus {} relevés tracés).",
+                binance::MAX_POINTS
+            ),
+        );
+    }
+    match &history.archive {
+        ArchiveReport::Failed(cause) => {
+            out = out.with_notice(
+                Level::Warning,
+                format!(
+                    "Historique de plus de {} jours indisponible, seuls les {} derniers jours sont affichés : {cause}",
+                    binance::HISTORY_DAYS,
+                    binance::HISTORY_DAYS
+                ),
+            );
+        }
+        ArchiveReport::Added {
+            missing_days,
+            cause: Some(cause),
+            ..
+        } if *missing_days > 0 => {
+            out = out.with_notice(
+                Level::Warning,
+                format!(
+                    "{missing_days} jour(s) de l'archive n'ont pas pu être lus, le tracé relie les relevés voisins : {cause}"
+                ),
+            );
+        }
+        _ => {}
+    }
     if let Err(e) = &klines {
         out = out.with_notice(
             Level::Warning,
