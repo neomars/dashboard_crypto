@@ -3,7 +3,7 @@
 //! affichant toutes les figures avec Plotly.js, pour contrôle visuel.
 
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
-use dashboard_core::binance::{Kline, TopTraderPoint};
+use dashboard_core::binance::{Kline, TopTraderPoint, HISTORY_DAYS};
 use dashboard_core::config::Config;
 use dashboard_core::indicators::{self, mstr_mnav, IDS};
 use dashboard_core::series::{Candle, PricePoint};
@@ -262,7 +262,7 @@ fn provider() -> DataProvider {
     let end = current_period_start();
     for (coin, phase) in [("BTC", 0.0), ("ETH", 40.0)] {
         data.seed_binance_top_traders(coin, "4h", top_trader_points(end, phase));
-        data.seed_binance_klines(coin, "4h", top_trader_klines(end));
+        data.seed_binance_klines(coin, "4h", HISTORY_DAYS, top_trader_klines(end));
     }
     data
 }

@@ -3,12 +3,13 @@
 //! BGeometrics dont l'offre gratuite limite le nombre de requêtes.
 
 use crate::bgeometrics::{self, Reply};
-use crate::binance::{self, Kline, TopTraderPoint};
+use crate::binance::{self, ArchiveReport, ArchiveRow, Kline, TopTraderHistory, TopTraderPoint};
 use crate::config::Config;
 use crate::okx;
 use crate::series::{Candle, PricePoint};
 use crate::table::{self, Row};
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Utc};
+use futures_util::StreamExt;
 use serde_json::Value;
 use std::any::Any;
 use std::collections::HashMap;
@@ -39,6 +40,15 @@ const HOUR: Duration = Duration::from_secs(3600);
 const BINANCE_TTL: Duration = Duration::from_secs(300);
 /// Les métriques BGeometrics sont mises à jour une fois par jour.
 const BGEOMETRICS_DISK_TTL: i64 = 12 * 3600;
+/// Fichiers d'archive Binance téléchargés en même temps.
+const ARCHIVE_CONCURRENCY: usize = 8;
+/// Essais par fichier d'archive (erreur réseau, HTTP 429 ou 5xx), avec une pause croissante.
+const ARCHIVE_ATTEMPTS: u64 = 3;
+/// Durée maximale du téléchargement de tous les fichiers d'archive d'un historique.
+const ARCHIVE_DEADLINE: Duration = Duration::from_secs(120);
+/// Temps accordé à un fichier d'archive (quelques dizaines de Ko).
+const ARCHIVE_FILE_TIMEOUT: Duration = Duration::from_secs(30);
+const DAY_MS: i64 = 86_400_000;
 
 pub struct Halving {
     pub date: &'static str,
@@ -89,6 +99,7 @@ pub struct DataProvider {
     cache: Mutex<HashMap<String, CacheEntry>>,
     cache_dir: Option<PathBuf>,
     binance_url: String,
+    archive_url: String,
 }
 
 /// Série BGeometrics récupérée (ou relue depuis le cache disque).
@@ -128,6 +139,7 @@ impl DataProvider {
             cache: Mutex::new(HashMap::new()),
             cache_dir: dirs::cache_dir().map(|d| d.join("dashboard-crypto")),
             binance_url: binance::BASE_URL.to_string(),
+            archive_url: binance::ARCHIVE_URL.to_string(),
         }
     }
 
@@ -142,6 +154,13 @@ impl DataProvider {
     #[doc(hidden)]
     pub fn with_binance_url(mut self, base: impl Into<String>) -> Self {
         self.binance_url = base.into();
+        self
+    }
+
+    /// Lit l'archive Binance à une autre adresse de base (tests avec un faux serveur local).
+    #[doc(hidden)]
+    pub fn with_binance_archive_url(mut self, base: impl Into<String>) -> Self {
+        self.archive_url = base.into();
         self
     }
 
@@ -221,10 +240,11 @@ impl DataProvider {
         self.seed(binance_key(&symbol, period), points);
     }
 
+    /// Bougies d'un historique de `days` jours.
     #[doc(hidden)]
-    pub fn seed_binance_klines(&self, coin: &str, period: &str, klines: Vec<Kline>) {
+    pub fn seed_binance_klines(&self, coin: &str, period: &str, days: i64, klines: Vec<Kline>) {
         let symbol = binance::symbol(coin).expect("monnaie valide");
-        self.seed(binance_klines_key(&symbol, period), klines);
+        self.seed(binance_klines_key(&symbol, period, days), klines);
     }
 
     /// Pré-remplit le cache (tests hors ligne) : CSV de l'ISM PMI.
@@ -604,25 +624,26 @@ impl DataProvider {
     }
 
     /// Cours (bougies) du contrat perpétuel Binance `<MONNAIE>USDT` à la période
-    /// donnée, du début des relevés du ratio (avec une marge)
-    /// jusqu'à la bougie en cours. Les pages sont lues vers l'avant jusqu'à elle,
+    /// donnée, sur `days` jours d'historique (avec une marge) jusqu'à la bougie
+    /// en cours. Les pages sont lues vers l'avant jusqu'à elle,
     /// quelle que soit leur taille. Si on n'y parvient pas, c'est une erreur : des
     /// bougies qui s'arrêtent avant la fin donneraient des cours périmés.
     pub async fn binance_klines(
         &self,
         coin: &str,
         period: &str,
+        days: i64,
     ) -> Result<Arc<Vec<Kline>>, String> {
         let symbol = binance::symbol(coin)?;
         let period_ms =
             binance::period_ms(period).ok_or_else(|| format!("Période inconnue : {period}"))?;
         self.cached(
-            &binance_klines_key(&symbol, period),
+            &binance_klines_key(&symbol, period, days),
             BINANCE_TTL,
             || async {
                 let url = binance::klines_url(&self.binance_url);
                 let now = Utc::now().timestamp_millis();
-                let mut start = binance::kline_window_start(now);
+                let mut start = binance::kline_window_start(now, days);
                 let mut all: Vec<Kline> = Vec::new();
                 for _ in 0..binance::KLINES_MAX_PAGES {
                     let query = [
@@ -708,14 +729,308 @@ impl DataProvider {
         })
         .await
     }
+
+    /// Ratio des « top traders » sur `days` jours (voir [`binance::history_days`]) : les 30
+    /// derniers jours viennent de l'API, les relevés plus anciens de l'archive publique de
+    /// Binance, une fois vérifiée sa concordance avec l'API. Quand l'archive ne peut pas servir,
+    /// l'historique se limite à l'API et le rapport en donne la raison ; seule une erreur de
+    /// l'API elle-même fait échouer l'appel.
+    pub async fn binance_top_traders_history(
+        &self,
+        coin: &str,
+        period: &str,
+        days: i64,
+    ) -> Result<Arc<TopTraderHistory>, String> {
+        let symbol = binance::symbol(coin)?;
+        let period_ms =
+            binance::period_ms(period).ok_or_else(|| format!("Période inconnue : {period}"))?;
+        let api = self.binance_top_traders(&symbol, period).await?;
+        let since = Utc::now().timestamp_millis() - days * DAY_MS;
+        if days <= binance::HISTORY_DAYS {
+            let kept = api.partition_point(|p| p.ts < since);
+            return Ok(Arc::new(TopTraderHistory {
+                points: api[kept..].to_vec(),
+                archive: ArchiveReport::NotNeeded,
+            }));
+        }
+        self.cached(
+            &binance_history_key(&symbol, period, days),
+            BINANCE_TTL,
+            || async {
+                let first_api = api.first().map_or(since, |p| p.ts);
+                let day = |ms: i64| {
+                    DateTime::from_timestamp_millis(ms)
+                        .map(|t| t.date_naive())
+                        .ok_or_else(|| "Date d'historique invalide.".to_string())
+                };
+                // Un jour de plus avant le début : selon la convention du fichier, le relevé de
+                // minuit est le dernier de la veille.
+                let first_day = day(since - DAY_MS)?;
+                let last_day = day(first_api + binance::overlap_days(period_ms) * DAY_MS)?;
+                let files: Vec<NaiveDate> = first_day
+                    .iter_days()
+                    .take_while(|d| *d <= last_day)
+                    .collect();
+
+                let fetch = self.fetch_archive_rows(&symbol, files).await;
+                let (points, archive) = if fetch.rows.is_empty() {
+                    let report = match fetch.cause {
+                        Some(cause) => ArchiveReport::Failed(cause),
+                        None => ArchiveReport::Nothing,
+                    };
+                    (api.to_vec(), report)
+                } else {
+                    match binance::stitch(&api, &fetch.rows, period_ms, since) {
+                        Ok(s) if s.from_archive == 0 => (s.points, ArchiveReport::Nothing),
+                        Ok(s) => (
+                            s.points,
+                            ArchiveReport::Added {
+                                added: s.from_archive,
+                                gap: s.gap,
+                                common: s.common,
+                                missing_days: fetch.missing,
+                                cause: fetch.cause,
+                            },
+                        ),
+                        Err(e) => {
+                            let e = match fetch.cause {
+                                Some(cause) => format!("{e} ({cause})"),
+                                None => e,
+                            };
+                            (api.to_vec(), ArchiveReport::Failed(e))
+                        }
+                    }
+                };
+                Ok(TopTraderHistory { points, archive })
+            },
+        )
+        .await
+    }
+
+    /// Relevés des fichiers d'archive de ces jours, téléchargés en parallèle. Un jour illisible
+    /// est compté dans `missing`, et si rien ne répond au premier lot de fichiers, on renonce
+    /// aux autres plutôt que d'attendre autant de délais d'expiration.
+    async fn fetch_archive_rows(&self, symbol: &str, days: Vec<NaiveDate>) -> ArchiveFetch {
+        let total = days.len();
+        let mut stream = futures_util::stream::iter(days)
+            .map(|day| async move { self.binance_archive_day(symbol, day).await })
+            .buffer_unordered(ARCHIVE_CONCURRENCY);
+        let deadline = tokio::time::Instant::now() + ARCHIVE_DEADLINE;
+        let (mut rows, mut read, mut failures, mut cause) = (Vec::new(), 0, 0, None);
+        let mut timed_out = false;
+        loop {
+            match tokio::time::timeout_at(deadline, stream.next()).await {
+                Err(_) => {
+                    timed_out = true;
+                    break;
+                }
+                Ok(None) => break,
+                Ok(Some(Ok(day_rows))) => {
+                    read += 1;
+                    rows.extend(day_rows);
+                }
+                Ok(Some(Err(e))) => {
+                    failures += 1;
+                    cause.get_or_insert(e);
+                    if read == 0 && failures >= ARCHIVE_CONCURRENCY {
+                        break;
+                    }
+                }
+            }
+        }
+        if timed_out {
+            cause.get_or_insert_with(|| {
+                format!(
+                    "Archive Binance trop lente (plus de {} s)",
+                    ARCHIVE_DEADLINE.as_secs()
+                )
+            });
+        }
+        rows.sort_by_key(|r| r.ts);
+        rows.dedup_by_key(|r| r.ts);
+        ArchiveFetch {
+            rows,
+            missing: total - read,
+            cause,
+        }
+    }
+
+    /// Relevés d'un jour de l'archive Binance, vides si Binance n'a pas de fichier pour ce
+    /// jour (contrat pas encore coté). Les jours passés sont gardés sur le disque : un fichier
+    /// publié ne change plus.
+    async fn binance_archive_day(
+        &self,
+        symbol: &str,
+        day: NaiveDate,
+    ) -> Result<Vec<ArchiveRow>, String> {
+        if let Some(rows) = self.read_archive_disk(symbol, day) {
+            return Ok(rows);
+        }
+        let url = binance::archive_url(&self.archive_url, symbol, day);
+        let mut cause = String::new();
+        for attempt in 0..ARCHIVE_ATTEMPTS {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_millis(500 * attempt)).await;
+            }
+            match self.download_archive_day(&url, symbol, day).await? {
+                Download::Rows(rows) => {
+                    self.write_archive_disk(symbol, day, &rows);
+                    return Ok(rows);
+                }
+                Download::Retry(why) => cause = why,
+            }
+        }
+        Err(cause)
+    }
+
+    async fn download_archive_day(
+        &self,
+        url: &str,
+        symbol: &str,
+        day: NaiveDate,
+    ) -> Result<Download, String> {
+        let resp = match self
+            .http
+            .get(url)
+            .timeout(ARCHIVE_FILE_TIMEOUT)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                return Ok(Download::Retry(format!(
+                    "Archive Binance injoignable : {e}"
+                )))
+            }
+        };
+        let status = resp.status().as_u16();
+        match status {
+            200 => {}
+            404 => return Ok(Download::Rows(Vec::new())),
+            451 => return Err(
+                "Archive Binance : connexions refusées depuis cette zone géographique (HTTP 451)."
+                    .into(),
+            ),
+            429 | 500..=599 => {
+                return Ok(Download::Retry(format!(
+                    "Archive Binance : HTTP {status} pour {symbol} le {day}"
+                )))
+            }
+            _ => {
+                return Err(format!(
+                    "Archive Binance : HTTP {status} pour {symbol} le {day}"
+                ))
+            }
+        }
+        let bytes = match resp.bytes().await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return Ok(Download::Retry(format!(
+                    "Archive Binance interrompue : {e}"
+                )))
+            }
+        };
+        let rows = binance::unzip_csv(&bytes)
+            .and_then(|text| binance::parse_archive_csv(&text))
+            .map_err(|e| format!("{e} (fichier du {day})"))?;
+        Ok(Download::Rows(rows))
+    }
+
+    fn archive_disk_path(&self, symbol: &str, day: NaiveDate) -> Option<PathBuf> {
+        Some(
+            self.cache_dir
+                .as_ref()?
+                .join("binance-archive")
+                .join(symbol)
+                .join(format!("{day}.csv")),
+        )
+    }
+
+    /// Jour d'archive relu depuis le disque : `ts,count,sum` par ligne, ratios vides si absents ;
+    /// un fichier vide est un jour sans relevé. `None` si le fichier manque ou est illisible.
+    fn read_archive_disk(&self, symbol: &str, day: NaiveDate) -> Option<Vec<ArchiveRow>> {
+        let text = std::fs::read_to_string(self.archive_disk_path(symbol, day)?).ok()?;
+        let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+        match lines.next() {
+            None => return Some(Vec::new()),
+            Some(ARCHIVE_DISK_HEADER) => {}
+            Some(_) => return None,
+        }
+        lines
+            .map(|line| {
+                let mut fields = line.split(',');
+                let ts = fields.next()?.parse().ok()?;
+                let mut ratio = || match fields.next()? {
+                    "" => Some(None),
+                    value => Some(Some(value.parse().ok()?)),
+                };
+                Some(ArchiveRow {
+                    ts,
+                    count: ratio()?,
+                    sum: ratio()?,
+                })
+            })
+            .collect()
+    }
+
+    fn write_archive_disk(&self, symbol: &str, day: NaiveDate, rows: &[ArchiveRow]) {
+        // Le fichier du jour (et de la veille) peut encore être complété ou republié.
+        if day >= today() - ChronoDuration::days(2) {
+            return;
+        }
+        let Some(path) = self.archive_disk_path(symbol, day) else {
+            return;
+        };
+        let mut text = String::new();
+        if !rows.is_empty() {
+            text.push_str(ARCHIVE_DISK_HEADER);
+            text.push('\n');
+            let cell = |v: Option<f64>| v.map_or(String::new(), |v| v.to_string());
+            for r in rows {
+                text.push_str(&format!("{},{},{}\n", r.ts, cell(r.count), cell(r.sum)));
+            }
+        }
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        // Écriture atomique : un fichier à moitié écrit ne doit pas remplacer le cache.
+        let tmp = path.with_extension("tmp");
+        if std::fs::write(&tmp, text).is_ok() {
+            let _ = std::fs::rename(tmp, path);
+        }
+    }
+}
+
+/// En-tête des jours d'archive gardés sur le disque.
+const ARCHIVE_DISK_HEADER: &str = "ts,count,sum";
+
+/// Relevés des fichiers d'archive d'une plage de jours.
+struct ArchiveFetch {
+    /// Triés par date, sans doublon.
+    rows: Vec<ArchiveRow>,
+    /// Jours dont le fichier n'a pas pu être lu.
+    missing: usize,
+    /// Raison du premier échec.
+    cause: Option<String>,
+}
+
+/// Résultat d'un essai de téléchargement d'un jour d'archive.
+enum Download {
+    Rows(Vec<ArchiveRow>),
+    /// Échec qu'un nouvel essai peut résoudre (réseau, HTTP 429 ou 5xx).
+    Retry(String),
 }
 
 fn binance_key(symbol: &str, period: &str) -> String {
     format!("binance:top-accounts:{symbol}:{period}")
 }
 
-fn binance_klines_key(symbol: &str, period: &str) -> String {
-    format!("binance:klines:{symbol}:{period}")
+fn binance_klines_key(symbol: &str, period: &str, days: i64) -> String {
+    format!("binance:klines:{symbol}:{period}:{days}")
+}
+
+fn binance_history_key(symbol: &str, period: &str, days: i64) -> String {
+    format!("binance:history:{symbol}:{period}:{days}")
 }
 
 /// Encode un segment d'URL (ex. `GC=F` → `GC%3DF`).
