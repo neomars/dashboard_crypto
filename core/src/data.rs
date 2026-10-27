@@ -3,7 +3,7 @@
 //! BGeometrics dont l'offre gratuite limite le nombre de requêtes.
 
 use crate::bgeometrics::{self, Reply};
-use crate::binance::{self, TopTraderPoint};
+use crate::binance::{self, Kline, TopTraderPoint};
 use crate::config::Config;
 use crate::okx;
 use crate::series::{Candle, PricePoint};
@@ -137,10 +137,11 @@ impl DataProvider {
         self
     }
 
-    /// Interroge un autre serveur que Binance (tests avec un faux serveur local).
+    /// Interroge un autre serveur que Binance, à une autre adresse de base
+    /// (tests avec un faux serveur local).
     #[doc(hidden)]
-    pub fn with_binance_url(mut self, url: impl Into<String>) -> Self {
-        self.binance_url = url.into();
+    pub fn with_binance_url(mut self, base: impl Into<String>) -> Self {
+        self.binance_url = base.into();
         self
     }
 
@@ -218,6 +219,12 @@ impl DataProvider {
     pub fn seed_binance_top_traders(&self, coin: &str, period: &str, points: Vec<TopTraderPoint>) {
         let symbol = binance::symbol(coin).expect("monnaie valide");
         self.seed(binance_key(&symbol, period), points);
+    }
+
+    #[doc(hidden)]
+    pub fn seed_binance_klines(&self, coin: &str, period: &str, klines: Vec<Kline>) {
+        let symbol = binance::symbol(coin).expect("monnaie valide");
+        self.seed(binance_klines_key(&symbol, period), klines);
     }
 
     /// Pré-remplit le cache (tests hors ligne) : CSV de l'ISM PMI.
@@ -574,6 +581,87 @@ impl DataProvider {
         .await
     }
 
+    /// Requête GET vers l'API Binance : code HTTP et corps JSON (`Null` quand le
+    /// corps n'en est pas : blocage, page d'erreur d'un proxy...).
+    async fn binance_get(
+        &self,
+        url: &str,
+        query: &[(&str, String)],
+    ) -> Result<(u16, Value), String> {
+        let resp = self
+            .http
+            .get(url)
+            .query(query)
+            .send()
+            .await
+            .map_err(|e| format!("Erreur réseau Binance : {e}"))?;
+        let status = resp.status().as_u16();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| format!("Réponse Binance illisible (HTTP {status}) : {e}"))?;
+        Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
+    }
+
+    /// Cours (bougies) du contrat perpétuel Binance `<MONNAIE>USDT` à la période
+    /// donnée, du début des relevés du ratio (avec une marge)
+    /// jusqu'à la bougie en cours. Les pages sont lues vers l'avant jusqu'à elle,
+    /// quelle que soit leur taille. Si on n'y parvient pas, c'est une erreur : des
+    /// bougies qui s'arrêtent avant la fin donneraient des cours périmés.
+    pub async fn binance_klines(
+        &self,
+        coin: &str,
+        period: &str,
+    ) -> Result<Arc<Vec<Kline>>, String> {
+        let symbol = binance::symbol(coin)?;
+        let period_ms =
+            binance::period_ms(period).ok_or_else(|| format!("Période inconnue : {period}"))?;
+        self.cached(
+            &binance_klines_key(&symbol, period),
+            BINANCE_TTL,
+            || async {
+                let url = binance::klines_url(&self.binance_url);
+                let now = Utc::now().timestamp_millis();
+                let mut start = binance::kline_window_start(now);
+                let mut all: Vec<Kline> = Vec::new();
+                for _ in 0..binance::KLINES_MAX_PAGES {
+                    let query = [
+                        ("symbol", symbol.clone()),
+                        ("interval", period.to_string()),
+                        ("limit", binance::KLINES_PAGE_SIZE.to_string()),
+                        ("startTime", start.to_string()),
+                    ];
+                    let (status, body) = self.binance_get(&url, &query).await?;
+                    let page = binance::parse_klines(status, &body, &symbol)?;
+                    let Some(last) = page.last().map(|k| k.ts) else {
+                        break;
+                    };
+                    all.extend(page);
+                    // Sans progrès vers l'avant (paramètre ignoré), on s'arrête plutôt que de boucler.
+                    match binance::next_kline_start(last, period_ms, now) {
+                        Some(next) if next > start => start = next,
+                        _ => break,
+                    }
+                }
+                all.sort_by_key(|k| k.ts);
+                all.dedup_by_key(|k| k.ts);
+                let Some(last) = all.last().map(|k| k.ts) else {
+                    return Err(format!("Aucune bougie Binance pour {symbol}."));
+                };
+                if !binance::klines_up_to_date(last, period_ms, now) {
+                    return Err(format!(
+                        "Bougies Binance incomplètes pour {symbol} : la dernière date du {}.",
+                        DateTime::from_timestamp_millis(last).map_or(String::new(), |t| t
+                            .format("%d/%m/%Y %H:%M UTC")
+                            .to_string())
+                    ));
+                }
+                Ok(all)
+            },
+        )
+        .await
+    }
+
     /// Ratio long/short des « top traders » (comptes) du contrat perpétuel
     /// Binance `<MONNAIE>USDT` : `period` est un intervalle de l'API (`4h`, `1d`...).
     /// Binance ne publie que les 30 derniers jours : les pages de 500 points
@@ -585,6 +673,7 @@ impl DataProvider {
     ) -> Result<Arc<Vec<TopTraderPoint>>, String> {
         let symbol = binance::symbol(coin)?;
         self.cached(&binance_key(&symbol, period), BINANCE_TTL, || async {
+            let url = binance::ratio_url(&self.binance_url);
             let floor = binance::window_floor(Utc::now().timestamp_millis());
             let mut all: Vec<TopTraderPoint> = Vec::new();
             let mut end: Option<i64> = None;
@@ -597,20 +686,7 @@ impl DataProvider {
                 if let Some(e) = end {
                     query.push(("endTime", e.to_string()));
                 }
-                let resp = self
-                    .http
-                    .get(&self.binance_url)
-                    .query(&query)
-                    .send()
-                    .await
-                    .map_err(|e| format!("Erreur réseau Binance : {e}"))?;
-                let status = resp.status().as_u16();
-                // Le corps d'une erreur n'est pas toujours du JSON (blocage, proxy...).
-                let text = resp
-                    .text()
-                    .await
-                    .map_err(|e| format!("Réponse Binance illisible (HTTP {status}) : {e}"))?;
-                let body: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+                let (status, body) = self.binance_get(&url, &query).await?;
                 let page = binance::parse_points(status, &body, &symbol)?;
                 let Some(oldest) = page.first().map(|p| p.ts) else {
                     break;
@@ -636,6 +712,10 @@ impl DataProvider {
 
 fn binance_key(symbol: &str, period: &str) -> String {
     format!("binance:top-accounts:{symbol}:{period}")
+}
+
+fn binance_klines_key(symbol: &str, period: &str) -> String {
+    format!("binance:klines:{symbol}:{period}")
 }
 
 /// Encode un segment d'URL (ex. `GC=F` → `GC%3DF`).

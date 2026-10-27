@@ -31,7 +31,7 @@ const SOURCES = [
   ["Yahoo Finance", "https://finance.yahoo.com", "prix, volumes et historiques (BTC et autres tickers)"],
   ["BGeometrics", "https://bitcoin-data.com", "métriques on-chain : SOPR, NRPL, HODL waves, ETF (gratuit : 8 requêtes/heure, 15/jour, 4 dernières années ; données gardées 12 h sur le disque)"],
   ["OKX", "https://www.okx.com", "positions long/short et open interest des contrats perpétuels"],
-  ["Binance", "https://www.binance.com", "ratio long/short des meilleurs traders (comptes) des contrats perpétuels USDT, sur les 30 derniers jours seulement"],
+  ["Binance", "https://www.binance.com", "cours (bougies) et ratio long/short des meilleurs traders (comptes) des contrats perpétuels USDT ; le ratio ne couvre que les 30 derniers jours"],
   ["alternative.me", "https://alternative.me/crypto/fear-and-greed-index/", "indice Fear & Greed"],
   ["mempool.space", "https://mempool.space", "hauteur de bloc (estimation du prochain halving)"],
   ["Bitcoin-Dataset (GitHub)", "https://github.com/Yrzxiong/Bitcoin-Dataset", "historique du prix BTC 2010-2018"],

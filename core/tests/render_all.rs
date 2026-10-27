@@ -3,7 +3,7 @@
 //! affichant toutes les figures avec Plotly.js, pour contrôle visuel.
 
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
-use dashboard_core::binance::TopTraderPoint;
+use dashboard_core::binance::{Kline, TopTraderPoint};
 use dashboard_core::config::Config;
 use dashboard_core::indicators::{self, mstr_mnav, IDS};
 use dashboard_core::series::{Candle, PricePoint};
@@ -88,23 +88,45 @@ fn days(from: &str, step: i64) -> impl Iterator<Item = NaiveDate> {
         .take_while(move |x| *x <= end)
 }
 
-/// Ratio de comptes des top traders Binance : un relevé toutes les 4 h sur 30 jours,
-/// le dernier valant exactement 2,375 (70,4 % de comptes long).
-fn top_trader_points(phase: f64) -> Vec<TopTraderPoint> {
-    const PERIOD_MS: i64 = 4 * 3_600_000;
-    let end = chrono::Utc::now().timestamp_millis() / PERIOD_MS * PERIOD_MS;
+const TOP_TRADER_PERIOD_MS: i64 = 4 * 3_600_000;
+
+/// Début de la période de 4 h en cours : le dernier relevé du ratio et la bougie en cours.
+fn current_period_start() -> i64 {
+    chrono::Utc::now().timestamp_millis() / TOP_TRADER_PERIOD_MS * TOP_TRADER_PERIOD_MS
+}
+
+/// Ratio de comptes des top traders Binance : un relevé toutes les 4 h sur 30 jours, autour de
+/// 1,5, le dernier valant exactement 2,375 (70,4 % de comptes long).
+fn top_trader_points(end: i64, phase: f64) -> Vec<TopTraderPoint> {
     (0..180)
         .map(|i| {
             let ratio = if i == 179 {
                 2.375
             } else {
-                1.6 + 0.8 * ((i as f64 + phase) / 15.0).sin()
+                1.5 + 0.03 * ((i as f64 + phase) / 15.0).sin()
             };
             TopTraderPoint {
-                ts: end - (179 - i) * PERIOD_MS,
+                ts: end - (179 - i) * TOP_TRADER_PERIOD_MS,
                 ratio,
                 long: ratio / (1.0 + ratio),
                 short: 1.0 / (1.0 + ratio),
+            }
+        })
+        .collect()
+}
+
+/// Bougies de 4 h du même contrat, de 3 jours avant le premier relevé à la bougie en cours : le
+/// cours monte de 10 par bougie depuis 80 000.
+fn top_trader_klines(end: i64) -> Vec<Kline> {
+    (0..=197)
+        .map(|j| {
+            let close = 80_000.0 + 10.0 * j as f64;
+            Kline {
+                ts: end - (197 - j) * TOP_TRADER_PERIOD_MS,
+                open: close - 5.0,
+                high: close + 20.0,
+                low: close - 20.0,
+                close,
             }
         })
         .collect()
@@ -237,8 +259,11 @@ fn provider() -> DataProvider {
         );
     }
 
-    data.seed_binance_top_traders("BTC", "4h", top_trader_points(0.0));
-    data.seed_binance_top_traders("ETH", "4h", top_trader_points(40.0));
+    let end = current_period_start();
+    for (coin, phase) in [("BTC", 0.0), ("ETH", 40.0)] {
+        data.seed_binance_top_traders(coin, "4h", top_trader_points(end, phase));
+        data.seed_binance_klines(coin, "4h", top_trader_klines(end));
+    }
     data
 }
 
@@ -340,8 +365,15 @@ async fn mstr_mnav_matches_known_ratio_on_trading_days() {
     assert!(!without_btc.figure.data.iter().any(|t| t["yaxis"] == "y3"));
 }
 
+fn metrics_of(out: &indicators::IndicatorOutput) -> Vec<(&str, &str)> {
+    out.metrics
+        .iter()
+        .map(|m| (m.label.as_str(), m.value.as_str()))
+        .collect()
+}
+
 #[tokio::test]
-async fn top_traders_coin_period_and_errors() {
+async fn top_traders_price_above_the_plain_ratio_coin_period_and_errors() {
     let data = provider();
 
     // Sans réglage : BTC, période de 4 heures.
@@ -353,20 +385,26 @@ async fn top_traders_coin_period_and_errors() {
         title.starts_with("BTCUSDT") && title.contains("4 heures"),
         "{title}"
     );
-    let metrics: Vec<(&str, &str)> = out
-        .metrics
-        .iter()
-        .map(|m| (m.label.as_str(), m.value.as_str()))
-        .collect();
+    // Le cours (chandeliers) en haut, le ratio tel quel dans le panneau du bas : rien d'autre.
+    let traces = &out.figure.data;
+    assert_eq!(traces.len(), 2);
+    assert_eq!(traces[0]["type"], "candlestick");
+    // Du premier relevé à la bougie en cours : les 3 jours de marge ne sont pas affichés.
+    assert_eq!(traces[0]["x"].as_array().unwrap().len(), 180);
+    assert_eq!(traces[1]["name"], "Ratio Long/Short (top traders)");
+    assert_eq!(traces[1]["yaxis"], "y2");
+    assert_eq!(traces[1]["y"].as_array().unwrap().len(), 180);
     assert_eq!(
-        metrics,
+        metrics_of(&out),
         [
             ("Ratio Long/Short actuel", "2,3750"),
             ("Comptes long", "70,4 %"),
             ("Comptes short", "29,6 %"),
         ]
     );
+    // Seule la note sur les 30 jours de Binance : ni signal ni lecture.
     let notices = serde_json::to_value(&out.notices).unwrap();
+    assert_eq!(notices.as_array().unwrap().len(), 1);
     assert_eq!(notices[0]["level"], "info");
     let text = notices[0]["text"].as_str().unwrap();
     assert!(
