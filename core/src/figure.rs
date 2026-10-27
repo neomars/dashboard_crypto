@@ -71,28 +71,56 @@ pub fn merge(base: &mut Value, extra: Value) {
     }
 }
 
+/// Bornes verticales de deux rangées superposées : (bas de celle du haut, haut de celle du bas).
+fn row_edges(row_heights: [f64; 2], spacing: f64) -> (f64, f64) {
+    let usable = 1.0 - spacing;
+    let total = row_heights[0] + row_heights[1];
+    let bottom_top = usable * row_heights[1] / total;
+    (bottom_top + spacing, bottom_top)
+}
+
+/// Titres centrés au-dessus de chacune des deux rangées.
+fn row_titles(titles: [&str; 2], bottom_top: f64) -> Value {
+    let title = |text: &str, y: f64| {
+        json!({
+            "text": text, "x": 0.5, "y": y, "xref": "paper", "yref": "paper",
+            "xanchor": "center", "yanchor": "bottom", "showarrow": false, "font": {"size": 16}
+        })
+    };
+    json!([title(titles[0], 1.0), title(titles[1], bottom_top)])
+}
+
 /// Mise en page de deux graphiques superposés partageant l'axe X (équivalent
 /// de `make_subplots(rows=2, shared_xaxes=True, ...)`). Les traces du bas
 /// utilisent `xaxis: "x2", yaxis: "y2"`.
 pub fn two_rows(row_heights: [f64; 2], spacing: f64, titles: Option<[&str; 2]>) -> Value {
-    let usable = 1.0 - spacing;
-    let total = row_heights[0] + row_heights[1];
-    let bottom_top = usable * row_heights[1] / total;
-    let top_bottom = bottom_top + spacing;
+    let (top_bottom, bottom_top) = row_edges(row_heights, spacing);
     let mut layout = json!({
         "xaxis": {"anchor": "y", "domain": [0, 1], "matches": "x2", "showticklabels": false},
         "xaxis2": {"anchor": "y2", "domain": [0, 1]},
         "yaxis": {"anchor": "x", "domain": [top_bottom, 1]},
         "yaxis2": {"anchor": "x2", "domain": [0, bottom_top]},
     });
-    if let Some([t1, t2]) = titles {
-        let title = |text: &str, y: f64| {
-            json!({
-                "text": text, "x": 0.5, "y": y, "xref": "paper", "yref": "paper",
-                "xanchor": "center", "yanchor": "bottom", "showarrow": false, "font": {"size": 16}
-            })
-        };
-        layout["annotations"] = json!([title(t1, 1.0), title(t2, bottom_top)]);
+    if let Some(titles) = titles {
+        layout["annotations"] = row_titles(titles, bottom_top);
+    }
+    layout
+}
+
+/// Deux graphiques superposés sur **un seul** axe X, affiché en bas : les traces du bas
+/// utilisent `yaxis: "y2"` (et l'axe X par défaut). Avec `hovermode: "x unified"`, l'infobulle
+/// réunit alors les deux graphiques (réglage `hoversubplots: "axis"`, inclus ici), ce que
+/// [`two_rows`], qui donne un axe X à chaque rangée, ne permet pas.
+pub fn two_rows_shared_x(row_heights: [f64; 2], spacing: f64, titles: Option<[&str; 2]>) -> Value {
+    let (top_bottom, bottom_top) = row_edges(row_heights, spacing);
+    let mut layout = json!({
+        "xaxis": {"anchor": "y2", "domain": [0, 1]},
+        "yaxis": {"anchor": "x", "domain": [top_bottom, 1]},
+        "yaxis2": {"anchor": "x", "domain": [0, bottom_top]},
+        "hoversubplots": "axis",
+    });
+    if let Some(titles) = titles {
+        layout["annotations"] = row_titles(titles, bottom_top);
     }
     layout
 }
@@ -123,5 +151,24 @@ mod tests {
         assert!((y2[1].as_f64().unwrap() - 0.27).abs() < 1e-9);
         assert!((y1[0].as_f64().unwrap() - 0.37).abs() < 1e-9);
         assert_eq!(l["annotations"][1]["text"], "B");
+    }
+
+    #[test]
+    fn shared_x_rows_have_the_same_domains_and_a_single_date_axis() {
+        let shared = two_rows_shared_x([0.7, 0.3], 0.1, Some(["A", "B"]));
+        let separate = two_rows([0.7, 0.3], 0.1, Some(["A", "B"]));
+        // Mêmes rangées et mêmes titres que `two_rows`.
+        assert_eq!(shared["yaxis"]["domain"], separate["yaxis"]["domain"]);
+        assert_eq!(shared["yaxis2"]["domain"], separate["yaxis2"]["domain"]);
+        assert_eq!(shared["annotations"], separate["annotations"]);
+        // Un seul axe X, en bas, auquel les deux axes verticaux sont rattachés.
+        assert!(shared.get("xaxis2").is_none());
+        assert_eq!(shared["xaxis"]["anchor"], "y2");
+        assert_eq!(shared["yaxis"]["anchor"], "x");
+        assert_eq!(shared["yaxis2"]["anchor"], "x");
+        assert_eq!(shared["hoversubplots"], "axis");
+        assert!(two_rows_shared_x([1.0, 1.0], 0.0, None)
+            .get("annotations")
+            .is_none());
     }
 }

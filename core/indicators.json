@@ -95,9 +95,9 @@
         "id": "top_traders",
         "name": "Top Traders Long/Short (Binance)",
         "icon": "🐋",
-        "description": "Ratio long/short des meilleurs traders de Binance Futures (les 20 % de comptes ayant le plus de marge), au choix de la monnaie et de la période. Binance ne publie que les 30 derniers jours.",
+        "description": "Cours de la monnaie choisie et ratio long/short des meilleurs traders de Binance Futures (les 20 % de comptes ayant le plus de marge), avec un signal d'achat ou de vente indicatif. Binance ne publie que les 30 derniers jours du ratio.",
         "default_scale": "linear",
-        "interpretation": "Ratio > 1 : parmi les meilleurs traders, plus de comptes sont net long que net short ; ratio < 1 : l'inverse. Chaque compte compte pour un, quelle que soit la taille de sa position. Un ratio extrême signale un positionnement très unilatéral (risque de liquidations en cascade en cas de retournement)."
+        "interpretation": "Ratio > 1 : parmi les meilleurs traders, plus de comptes sont net long que net short ; ratio < 1 : l'inverse. Chaque compte compte pour un, quelle que soit la taille de sa position. Un signal apparaît quand ils sont positionnés de façon extrême par rapport à leur habitude des 7 derniers jours (ratio hors des bandes jaunes, à ±1,5 écart-type) alors que le cours va à contre-courant (sous sa moyenne des 2 derniers jours pour une foule long, au-dessus pour une foule short). Lecture contrarienne : foule long et cours qui baisse = VENTE, foule short et cours qui monte = ACHAT. Lecture smart money : l'inverse, les top traders achètent la baisse ou vendent la hausse. Règle indicative et non validée : 30 jours de données ne permettent pas d'en mesurer la fiabilité."
     },
     {
         "id": "cycle_roi",

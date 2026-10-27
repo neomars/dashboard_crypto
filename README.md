@@ -31,7 +31,7 @@ Outils d'analyse : ils ne déclenchent aucun ordre et n'alimentent pas le moteur
 10. **BTC ETF Holdings** : Bitcoin détenus par les ETF spot, corrélés au prix, via BGeometrics.
 11. **Bear Market Support Band** : Indicateur de Benjamin Cowen combinant la SMA 20 semaines et l'EMA 21 semaines pour identifier les phases de marché.
 12. **Long/Short Positions (OKX)** : Sentiment des traders sur les contrats perpétuels OKX (part des comptes long et short, ratio, open interest), avec le prix de l'actif superposé.
-13. **Top Traders Long/Short (Binance)** : Ratio long/short des meilleurs traders de Binance Futures (les 20 % de comptes ayant le plus de marge) sur le contrat perpétuel de la monnaie choisie, à la manière du panneau « Meilleurs traders longs/courts (Comptes) » de CoinGlass. La monnaie (11 proposées, ou « Autre… » pour tout contrat USDT : ARB, 1000PEPE...) et la période (de 5 minutes à 1 jour) se choisissent en haut de la page ; l'infobulle donne le ratio et la part des comptes long et short. Binance ne publie que les 30 derniers jours (voir [Limites de Binance](#limites-de-binance)).
+13. **Top Traders Long/Short (Binance)** : Cours de la monnaie choisie (chandeliers du contrat perpétuel Binance Futures) au-dessus du ratio long/short des meilleurs traders (les 20 % de comptes ayant le plus de marge), à la manière de CoinGlass (panneau « Meilleurs traders longs/courts (Comptes) »), avec un signal d'achat ou de vente indicatif (voir [Signal des top traders](#signal-des-top-traders-achat--vente)). La monnaie (11 proposées, ou « Autre… » pour tout contrat USDT : ARB, 1000PEPE...), la période (de 5 minutes à 1 jour) et la lecture du signal se choisissent en haut de la page ; l'infobulle donne le cours, le ratio et la part des comptes long et short. Binance ne publie que les 30 derniers jours du ratio (voir [Limites de Binance](#limites-de-binance)).
 14. **Bitcoin Market Cycle ROI** : Comparaison de la performance du Bitcoin (ROI) depuis les différents sommets (tops) de cycle historiques.
 15. **Realized Cap HODL Waves** : Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge, de moins d'un jour à plus de 10 ans), via BGeometrics.
 16. **Net Realized Profit / Loss** : Profit ou perte nets réalisés chaque semaine sur la blockchain, affichés en bulles sur le prix du Bitcoin (vert = profit net, rouge = perte nette, taille proportionnelle au montant), à la manière du graphique Glassnode « Profit Taking ». Permet de voir si une hausse s'accompagne d'une forte prise de profit ou non. Données : NRPL journalier de BGeometrics, cumulé par semaine.
@@ -318,6 +318,33 @@ Le CSV en ligne est contrôlé : les valeurs hors de la plage 25-80 sont rejeté
 2026-09 = 49.1
 ```
 
+### Signal des top traders (achat / vente)
+
+Code : [`core/src/indicators/top_traders_signal.rs`](core/src/indicators/top_traders_signal.rs) (la règle) et [`top_traders.rs`](core/src/indicators/top_traders.rs) (l'affichage). Le signal est **indicatif** : il n'est pas validé (voir plus bas), ne déclenche aucun ordre et n'alimente pas le moteur de trading.
+
+**Deux informations**, observées à chaque relevé du ratio avec le seul passé :
+
+| | Calcul | État |
+|---|---|---|
+| Positionnement | écart du ratio $r$ à sa moyenne mobile $\bar r$ sur 7 jours, comparé à $\max(1{,}5\,\sigma,\ 0{,}05)$ ($\sigma$ : écart-type sur la même fenêtre) | **long** si $r - \bar r \ge$ seuil, **short** si $r - \bar r \le -$ seuil, normal sinon |
+| Tendance du cours | cours $p$ comparé à sa moyenne mobile sur 2 jours | **haussière** si $p >$ moyenne, **baissière** sinon |
+
+Le plancher de 0,05 évite de lire du bruit comme un extrême quand le ratio est presque constant (contrat peu actif). Les fenêtres sont fixées en durée (7 jours et 2 jours) puis converties en nombre de relevés selon la période : 42 et 12 relevés en 4 heures, 7 et 2 en 1 jour. Rien n'est évalué tant qu'elles ne sont pas pleines, donc pas de signal sur les 7 premiers jours affichés.
+
+**Signal** : un positionnement extrême qui va **contre** le cours (top traders très long alors que le cours est sous sa moyenne, ou très short alors qu'il est au-dessus). Cette situation se lit de deux façons opposées, au choix en haut de la page :
+
+| Situation | Lecture contrarienne (par défaut) | Lecture smart money |
+|---|---|---|
+| top traders très long, cours sous sa moyenne | **VENTE** : les longs sont à risque (liquidations) | **ACHAT** : ils achètent la baisse |
+| top traders très short, cours au-dessus de sa moyenne | **ACHAT** : les shorts sont à risque (rachats forcés) | **VENTE** : ils vendent la hausse |
+| tout autre cas | neutre | neutre |
+
+Le signal en vigueur au dernier relevé s'affiche dans la tuile « Signal » (🟢 ACHAT, 🔴 VENTE, ⚪ NEUTRE, ou ⚪ INDÉTERMINÉ si l'historique est trop court), avec son explication chiffrée. Les marqueurs ▲ et ▼ du graphique sont posés au premier relevé de chaque série de signaux de même sens, et au plus un marqueur de même sens par période de 2 jours, pour ne pas charger le graphique quand le cours oscille autour de sa moyenne. Les bandes jaunes du panneau du ratio sont les seuils de positionnement extrême.
+
+**Pas d'anticipation.** À chaque relevé, le cours utilisé est la clôture de la dernière bougie **terminée** (jamais celle de la bougie en cours), et toutes les moyennes ne regardent que le passé : le signal d'un relevé ne change pas quand de nouvelles données arrivent. Un test le vérifie en comparant l'analyse d'un historique tronqué à celle de l'historique entier.
+
+**Limites.** Binance ne publie que 30 jours de ratio : la règle ne peut pas être testée sur l'historique, et ses réglages (1,5 écart-type, 7 jours, 2 jours) sont raisonnables mais pas optimisés. Aucune des deux lectures n'est démontrée, et elles donnent des signaux opposés pour une même situation, y compris la plus courante dans une baisse (top traders de plus en plus long pendant que le cours recule). Le ratio compte des *comptes* : chaque compte compte pour un, quelle que soit la taille de sa position. À croiser avec d'autres informations ; ce n'est pas un conseil en investissement.
+
 ## Moteur de trading
 
 Code : [`trading/`](trading/) (crate `trading-engine`). Il ne dépend pas de `core/` : indicateurs de marché et moteur de trading ne partagent ni données ni calculs. L'application ([`src-tauri/src/trading.rs`](src-tauri/src/trading.rs)) appelle le moteur et affiche ses résultats dans la section **Trading**.
@@ -535,7 +562,7 @@ Toutes les données viennent d'API publiques et gratuites, **sans clé ni compte
 | [Yahoo Finance](https://finance.yahoo.com) | prix, volumes et historiques (BTC et tout ticker du simulateur) |
 | [BGeometrics](https://bitcoin-data.com) | métriques on-chain : STH/LTH-SOPR, NRPL, Realized Cap HODL Waves, BTC détenus par les ETF |
 | [OKX](https://www.okx.com) | ratio de comptes long/short et open interest des contrats perpétuels |
-| [Binance](https://www.binance.com) | ratio long/short des meilleurs traders (comptes) des contrats perpétuels USDT, sur les 30 derniers jours |
+| [Binance](https://www.binance.com) | cours (bougies) et ratio long/short des meilleurs traders (comptes) des contrats perpétuels USDT ; le ratio ne couvre que les 30 derniers jours |
 | [alternative.me](https://alternative.me/crypto/fear-and-greed-index/) | indice Fear & Greed |
 | [mempool.space](https://mempool.space) | hauteur de bloc (estimation du prochain halving) |
 | [Bitcoin-Dataset](https://github.com/Yrzxiong/Bitcoin-Dataset) (GitHub) | historique du prix BTC 2010-2018 |
@@ -546,7 +573,7 @@ Toutes les données viennent d'API publiques et gratuites, **sans clé ni compte
 
 ### Limites de Binance
 
-L'API publique de Binance Futures ne conserve que les **30 derniers jours** du ratio long/short des meilleurs traders, quelle que soit la période choisie : l'indicateur « Top Traders Long/Short » ne remonte donc pas plus loin (au plus 180 relevés en 4 heures, 30 en 1 jour). Les périodes de moins de 2 heures demandent plusieurs requêtes (500 relevés au plus chacune). Les réponses sont gardées 5 minutes en mémoire. Binance refuse les connexions depuis certaines zones géographiques : l'indicateur affiche alors une erreur « HTTP 451 ».
+L'API publique de Binance Futures ne conserve que les **30 derniers jours** du ratio long/short des meilleurs traders, quelle que soit la période choisie : l'indicateur « Top Traders Long/Short » ne remonte donc pas plus loin (au plus 180 relevés en 4 heures, 30 en 1 jour). Les périodes de moins de 2 heures demandent plusieurs requêtes (500 relevés au plus chacune). Les bougies du cours n'ont pas cette limite : l'application en demande 33 jours (les 30 du ratio, plus 3 jours de marge pour que le premier relevé ait déjà un cours), par pages lues vers l'avant jusqu'à la bougie en cours. Les réponses sont gardées 5 minutes en mémoire. Si les bougies sont indisponibles ou incomplètes (elles s'arrêteraient avant la bougie en cours, ce qui donnerait des cours périmés), l'indicateur affiche le ratio seul, avec un avertissement et sans signal. Binance refuse les connexions depuis certaines zones géographiques : l'indicateur affiche alors une erreur « HTTP 451 ».
 
 ### Limites de BGeometrics
 
@@ -584,7 +611,7 @@ npm run build        # construit le paquet : .deb sous Linux (target/release/bun
 cargo test --workspace   # tests (après un premier `npm run vendor`)
 ```
 
-Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Binance / Fear & Greed / SEC (liste des dépôts, nombre d'actions en page de couverture, BTC détenus dans les 8-K), le cache disque, le rapport PDF, l'accès à l'API Binance (pagination, fenêtre de 30 jours, erreurs HTTP, cache) contre un faux serveur local (`core/tests/binance_http.rs`), et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
+Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Binance / Fear & Greed / SEC (liste des dépôts, nombre d'actions en page de couverture, BTC détenus dans les 8-K), le cache disque, le rapport PDF, l'accès à l'API Binance (ratio et bougies : pagination, fenêtre de 30 jours, erreurs HTTP, cache) contre un faux serveur local (`core/tests/binance_http.rs`), la règle du signal des top traders (dont l'absence d'anticipation), et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
 
 Ceux du moteur de trading couvrent ses indicateurs (EMA, ATR, canaux, volatilité), les signaux de cassure, les règles de risque, le backtest (exécution à l'ouverture suivante, frais, spot sans emprunt, stop et reprise, funding réel ou supposé, coupe-circuits), les résultats en BTC, la variante cassure, les mesures de performance, le décodage des réponses Poloniex, la lecture et le raccordement du MVRV (Coin Metrics, BGeometrics, limiteur de requêtes) et l'accumulation (calendrier, paliers, chronologie sans biais d'anticipation, comparaisons à budget égal, secours sans MVRV). les paramètres du contrat et les bougies 1 minute (extraits de l'API), le zigzag non rétroactif, les niveaux, la mise en place et son annulation, les ordres limites, la bougie ambiguë, la liquidation, l'arrondi aux contrats, le funding, les frais maker et taker, le placebo déterministe, le Monte-Carlo, le verdict et les repères de contrôle. `trading/tests/render_trading.rs` rejoue les pages Trading sur un marché et un MVRV synthétiques, sans réseau ; avec `TRADING_SAMPLES_HTML=/tmp/trading.html`, il écrit aussi des pages affichant leurs figures (`/tmp/trading.html`, `/tmp/trading-accumulation.html`).
 
@@ -596,7 +623,7 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
 
 - `core/` : bibliothèque Rust sans interface.
   - `data.rs` : accès aux données (Yahoo Finance, historique BTC 2010-2018, Fear & Greed, mempool.space, BGeometrics, OKX, Binance) avec cache mémoire, et cache disque pour BGeometrics.
-  - `bgeometrics.rs`, `okx.rs`, `binance.rs` : décodage des réponses de ces trois API (`binance.rs` : aussi les règles de pagination et la fenêtre de 30 jours).
+  - `bgeometrics.rs`, `okx.rs`, `binance.rs` : décodage des réponses de ces trois API (`binance.rs` : ratio des top traders et bougies, avec les règles de pagination et la fenêtre de 30 jours).
   - `sec.rs` : SEC EDGAR (liste des dépôts, nombre d'actions lu en page de couverture des 10-Q/10-K, BTC détenus lus dans les 8-K).
   - `table.rs` : lecture souple des colonnes des données tabulaires.
   - `indicators/` : un module par indicateur, chacun produisant une figure Plotly (JSON).
