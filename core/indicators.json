@@ -92,6 +92,14 @@
         "interpretation": "Un ratio long/short élevé signale un marché très positionné à la hausse (risque de liquidations en cascade si le prix baisse), et inversement."
     },
     {
+        "id": "top_traders",
+        "name": "Top Traders Long/Short (Binance)",
+        "icon": "🐋",
+        "description": "Ratio long/short des meilleurs traders de Binance Futures (les 20 % de comptes ayant le plus de marge), au choix de la monnaie et de la période. Binance ne publie que les 30 derniers jours.",
+        "default_scale": "linear",
+        "interpretation": "Ratio > 1 : parmi les meilleurs traders, plus de comptes sont net long que net short ; ratio < 1 : l'inverse. Chaque compte compte pour un, quelle que soit la taille de sa position. Un ratio extrême signale un positionnement très unilatéral (risque de liquidations en cascade en cas de retournement)."
+    },
+    {
         "id": "cycle_roi",
         "name": "Bitcoin Market Cycle ROI",
         "icon": "📈",

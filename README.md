@@ -31,11 +31,12 @@ Outils d'analyse : ils ne déclenchent aucun ordre et n'alimentent pas le moteur
 10. **BTC ETF Holdings** : Bitcoin détenus par les ETF spot, corrélés au prix, via BGeometrics.
 11. **Bear Market Support Band** : Indicateur de Benjamin Cowen combinant la SMA 20 semaines et l'EMA 21 semaines pour identifier les phases de marché.
 12. **Long/Short Positions (OKX)** : Sentiment des traders sur les contrats perpétuels OKX (part des comptes long et short, ratio, open interest), avec le prix de l'actif superposé.
-13. **Bitcoin Market Cycle ROI** : Comparaison de la performance du Bitcoin (ROI) depuis les différents sommets (tops) de cycle historiques.
-14. **Realized Cap HODL Waves** : Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge, de moins d'un jour à plus de 10 ans), via BGeometrics.
-15. **Net Realized Profit / Loss** : Profit ou perte nets réalisés chaque semaine sur la blockchain, affichés en bulles sur le prix du Bitcoin (vert = profit net, rouge = perte nette, taille proportionnelle au montant), à la manière du graphique Glassnode « Profit Taking ». Permet de voir si une hausse s'accompagne d'une forte prise de profit ou non. Données : NRPL journalier de BGeometrics, cumulé par semaine.
-16. **MSTR mNAV** : Cours de Strategy (MSTR), coloré du vert au rouge selon son mNAV (capitalisation boursière rapportée à la valeur des bitcoins détenus), avec la courbe du mNAV et ses zones en dessous. Montre d'un coup d'œil si l'action est sous-cotée ou sur-cotée par rapport à ses bitcoins (voir [Calcul du MSTR mNAV](#calcul-du-mstr-mnav)).
-17. **Business Cycle vs Bitcoin** : Momentum du Bitcoin (écart à sa moyenne mobile 24 mois) comparé au cycle économique américain (ISM Manufacturing PMI centré sur 50), avec les périodes de divergence en fond. Reprend l'indicateur TradingView « deKoder | Business Cycle vs Bitcoin » (dK=PMIvsBTC) (voir [Calcul du Business Cycle vs Bitcoin](#calcul-du-business-cycle-vs-bitcoin)).
+13. **Top Traders Long/Short (Binance)** : Ratio long/short des meilleurs traders de Binance Futures (les 20 % de comptes ayant le plus de marge) sur le contrat perpétuel de la monnaie choisie, à la manière du panneau « Meilleurs traders longs/courts (Comptes) » de CoinGlass. La monnaie (11 proposées, ou « Autre… » pour tout contrat USDT : ARB, 1000PEPE...) et la période (de 5 minutes à 1 jour) se choisissent en haut de la page ; l'infobulle donne le ratio et la part des comptes long et short. Binance ne publie que les 30 derniers jours (voir [Limites de Binance](#limites-de-binance)).
+14. **Bitcoin Market Cycle ROI** : Comparaison de la performance du Bitcoin (ROI) depuis les différents sommets (tops) de cycle historiques.
+15. **Realized Cap HODL Waves** : Répartition du Realized Cap par ancienneté des UTXO (bandes d'âge, de moins d'un jour à plus de 10 ans), via BGeometrics.
+16. **Net Realized Profit / Loss** : Profit ou perte nets réalisés chaque semaine sur la blockchain, affichés en bulles sur le prix du Bitcoin (vert = profit net, rouge = perte nette, taille proportionnelle au montant), à la manière du graphique Glassnode « Profit Taking ». Permet de voir si une hausse s'accompagne d'une forte prise de profit ou non. Données : NRPL journalier de BGeometrics, cumulé par semaine.
+17. **MSTR mNAV** : Cours de Strategy (MSTR), coloré du vert au rouge selon son mNAV (capitalisation boursière rapportée à la valeur des bitcoins détenus), avec la courbe du mNAV et ses zones en dessous. Montre d'un coup d'œil si l'action est sous-cotée ou sur-cotée par rapport à ses bitcoins (voir [Calcul du MSTR mNAV](#calcul-du-mstr-mnav)).
+18. **Business Cycle vs Bitcoin** : Momentum du Bitcoin (écart à sa moyenne mobile 24 mois) comparé au cycle économique américain (ISM Manufacturing PMI centré sur 50), avec les périodes de divergence en fond. Reprend l'indicateur TradingView « deKoder | Business Cycle vs Bitcoin » (dK=PMIvsBTC) (voir [Calcul du Business Cycle vs Bitcoin](#calcul-du-business-cycle-vs-bitcoin)).
 
 ### Calcul du Bitcoin Cycle Correction Analysis
 
@@ -534,6 +535,7 @@ Toutes les données viennent d'API publiques et gratuites, **sans clé ni compte
 | [Yahoo Finance](https://finance.yahoo.com) | prix, volumes et historiques (BTC et tout ticker du simulateur) |
 | [BGeometrics](https://bitcoin-data.com) | métriques on-chain : STH/LTH-SOPR, NRPL, Realized Cap HODL Waves, BTC détenus par les ETF |
 | [OKX](https://www.okx.com) | ratio de comptes long/short et open interest des contrats perpétuels |
+| [Binance](https://www.binance.com) | ratio long/short des meilleurs traders (comptes) des contrats perpétuels USDT, sur les 30 derniers jours |
 | [alternative.me](https://alternative.me/crypto/fear-and-greed-index/) | indice Fear & Greed |
 | [mempool.space](https://mempool.space) | hauteur de bloc (estimation du prochain halving) |
 | [Bitcoin-Dataset](https://github.com/Yrzxiong/Bitcoin-Dataset) (GitHub) | historique du prix BTC 2010-2018 |
@@ -541,6 +543,10 @@ Toutes les données viennent d'API publiques et gratuites, **sans clé ni compte
 | Strategy / [SEC EDGAR](https://www.sec.gov/edgar) | BTC détenus et actions en circulation de Strategy (MSTR) : fichier intégré, complété automatiquement par les 8-K, 10-Q et 10-K récents, et par `config.ini` |
 | [Poloniex](https://api-docs.poloniex.com) | section Trading uniquement : bougies spot et perpétuel, historique du funding (180 derniers jours) |
 | [Coin Metrics](https://github.com/coinmetrics/data) (GitHub) et BGeometrics | section Trading uniquement (Accumulation BTC) : MVRV historique (CSV public) et récent (API ; quota gratuit partagé avec le tableau de bord) |
+
+### Limites de Binance
+
+L'API publique de Binance Futures ne conserve que les **30 derniers jours** du ratio long/short des meilleurs traders, quelle que soit la période choisie : l'indicateur « Top Traders Long/Short » ne remonte donc pas plus loin (au plus 180 relevés en 4 heures, 30 en 1 jour). Les périodes de moins de 2 heures demandent plusieurs requêtes (500 relevés au plus chacune). Les réponses sont gardées 5 minutes en mémoire. Binance refuse les connexions depuis certaines zones géographiques : l'indicateur affiche alors une erreur « HTTP 451 ».
 
 ### Limites de BGeometrics
 
@@ -578,7 +584,7 @@ npm run build        # construit le paquet : .deb sous Linux (target/release/bun
 cargo test --workspace   # tests (après un premier `npm run vendor`)
 ```
 
-Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Fear & Greed / SEC (liste des dépôts, nombre d'actions en page de couverture, BTC détenus dans les 8-K), le cache disque, le rapport PDF, et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
+Les tests couvrent les calculs (fenêtres glissantes, corrections, BMSB, VCR, simulateur, profit/perte réalisés…), le décodage des réponses Yahoo Finance / BGeometrics / OKX / Binance / Fear & Greed / SEC (liste des dépôts, nombre d'actions en page de couverture, BTC détenus dans les 8-K), le cache disque, le rapport PDF, l'accès à l'API Binance (pagination, fenêtre de 30 jours, erreurs HTTP, cache) contre un faux serveur local (`core/tests/binance_http.rs`), et le rendu de chaque indicateur à partir de données synthétiques (`core/tests/render_all.rs`, sans réseau). Avec `RENDER_SAMPLES_HTML=/tmp/figures.html`, ce test écrit aussi une page affichant toutes les figures, pour un contrôle visuel.
 
 Ceux du moteur de trading couvrent ses indicateurs (EMA, ATR, canaux, volatilité), les signaux de cassure, les règles de risque, le backtest (exécution à l'ouverture suivante, frais, spot sans emprunt, stop et reprise, funding réel ou supposé, coupe-circuits), les résultats en BTC, la variante cassure, les mesures de performance, le décodage des réponses Poloniex, la lecture et le raccordement du MVRV (Coin Metrics, BGeometrics, limiteur de requêtes) et l'accumulation (calendrier, paliers, chronologie sans biais d'anticipation, comparaisons à budget égal, secours sans MVRV). les paramètres du contrat et les bougies 1 minute (extraits de l'API), le zigzag non rétroactif, les niveaux, la mise en place et son annulation, les ordres limites, la bougie ambiguë, la liquidation, l'arrondi aux contrats, le funding, les frais maker et taker, le placebo déterministe, le Monte-Carlo, le verdict et les repères de contrôle. `trading/tests/render_trading.rs` rejoue les pages Trading sur un marché et un MVRV synthétiques, sans réseau ; avec `TRADING_SAMPLES_HTML=/tmp/trading.html`, il écrit aussi des pages affichant leurs figures (`/tmp/trading.html`, `/tmp/trading-accumulation.html`).
 
@@ -589,8 +595,8 @@ Pousser un tag `v2.1.0` : le workflow GitHub `Build` fixe la version (`scripts/s
 ## Structure du projet
 
 - `core/` : bibliothèque Rust sans interface.
-  - `data.rs` : accès aux données (Yahoo Finance, historique BTC 2010-2018, Fear & Greed, mempool.space, BGeometrics, OKX) avec cache mémoire, et cache disque pour BGeometrics.
-  - `bgeometrics.rs`, `okx.rs` : décodage des réponses de ces deux API.
+  - `data.rs` : accès aux données (Yahoo Finance, historique BTC 2010-2018, Fear & Greed, mempool.space, BGeometrics, OKX, Binance) avec cache mémoire, et cache disque pour BGeometrics.
+  - `bgeometrics.rs`, `okx.rs`, `binance.rs` : décodage des réponses de ces trois API (`binance.rs` : aussi les règles de pagination et la fenêtre de 30 jours).
   - `sec.rs` : SEC EDGAR (liste des dépôts, nombre d'actions lu en page de couverture des 10-Q/10-K, BTC détenus lus dans les 8-K).
   - `table.rs` : lecture souple des colonnes des données tabulaires.
   - `indicators/` : un module par indicateur, chacun produisant une figure Plotly (JSON).

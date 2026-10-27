@@ -1,8 +1,9 @@
 //! Cœur du Dashboard Crypto : accès aux données ouvertes (Yahoo Finance, BGeometrics, OKX,
-//! alternative.me, mempool.space), calcul des indicateurs et construction des
+//! Binance, alternative.me, mempool.space), calcul des indicateurs et construction des
 //! figures Plotly (JSON) affichées par l'interface.
 
 pub mod bgeometrics;
+pub mod binance;
 pub mod catalog;
 pub mod config;
 pub mod data;
