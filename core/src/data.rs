@@ -45,7 +45,7 @@ const ARCHIVE_CONCURRENCY: usize = 8;
 /// Essais par fichier d'archive (erreur réseau, HTTP 429 ou 5xx), avec une pause croissante.
 const ARCHIVE_ATTEMPTS: u64 = 3;
 /// Durée maximale du téléchargement de tous les fichiers d'archive d'un historique.
-const ARCHIVE_DEADLINE: Duration = Duration::from_secs(120);
+const ARCHIVE_DEADLINE: Duration = Duration::from_secs(240);
 /// Temps accordé à un fichier d'archive (quelques dizaines de Ko).
 const ARCHIVE_FILE_TIMEOUT: Duration = Duration::from_secs(30);
 const DAY_MS: i64 = 86_400_000;
