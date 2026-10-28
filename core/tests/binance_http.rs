@@ -92,6 +92,10 @@ fn fake_server(respond: impl Fn(&str, &Query) -> (u16, Vec<u8>) + Send + 'static
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { break };
             let (path, query) = read_request(&mut stream);
+            // Connexion coupée par le client avant sa requête (téléchargement abandonné).
+            if path.is_empty() {
+                continue;
+            }
             let (status, body) = respond(&path, &query);
             log.lock().unwrap().push((path, query));
             let head = format!(
@@ -1215,4 +1219,32 @@ async fn a_history_too_long_for_the_period_is_cut_and_said_so() {
             && n.contains("6000 relevés")),
         "{info:?}"
     );
+}
+
+#[tokio::test]
+async fn five_years_of_daily_ratios_come_from_one_file_per_day() {
+    let spec = ArchiveSpec {
+        first_day: days_ago(2_000),
+        ..ArchiveSpec::consistent()
+    };
+    let fake = serving_with_archive(DAY_MS, spec);
+    let history = provider(&fake)
+        .binance_top_traders_history("BTC", "1d", 1_825)
+        .await
+        .unwrap();
+    assert!(
+        (1_823..=1_826).contains(&history.points.len()),
+        "{} relevés",
+        history.points.len()
+    );
+    for pair in history.points.windows(2) {
+        assert_eq!(pair[1].ts - pair[0].ts, DAY_MS);
+    }
+    assert!(matches!(
+        history.archive,
+        ArchiveReport::Added {
+            missing_days: 0,
+            ..
+        }
+    ));
 }

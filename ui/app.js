@@ -25,11 +25,9 @@ const LONG_SHORT_MODES = ["Long vs Short", "Ratio Long/Short", "Open Interest"];
 // Indicateur « Top Traders » : monnaies proposées (contrats perpétuels USDT de Binance) ; toute
 // autre monnaie se saisit via « Autre… ». Périodes : intervalles de l'API Binance.
 const TOP_TRADER_COINS = ["BTC", "ETH", "BNB", "SOL", "XRP", "DOGE", "ADA", "TRX", "AVAX", "LINK", "LTC"];
-const TOP_TRADER_PERIODS = [["5m", "5 minutes"], ["15m", "15 minutes"], ["30m", "30 minutes"], ["1h", "1 heure"],
-  ["2h", "2 heures"], ["4h", "4 heures"], ["6h", "6 heures"], ["12h", "12 heures"], ["1d", "1 jour"]];
 // Profondeur de l'historique, en jours. L'API de Binance n'en publie que 30 ; au-delà, le ratio est lu dans
 // l'archive publique de Binance (un fichier par jour : le premier affichage d'un an est plus long).
-const TOP_TRADER_HISTORY = [[30, "30 jours"], [90, "3 mois"], [180, "6 mois"], [365, "1 an"]];
+const TOP_TRADER_HISTORY = [[90, "3 mois"], [180, "6 mois"], [365, "1 an"], [730, "2 ans"], [1095, "3 ans"], [1825, "5 ans"]];
 const SOURCES = [
   ["Yahoo Finance", "https://finance.yahoo.com", "prix, volumes et historiques (BTC et autres tickers)"],
   ["BGeometrics", "https://bitcoin-data.com", "métriques on-chain : SOPR, NRPL, HODL waves, ETF (gratuit : 8 requêtes/heure, 15/jour, 4 dernières années ; données gardées 12 h sur le disque)"],
@@ -70,7 +68,7 @@ const state = {
   params: {        // paramètres saisis par indicateur
     bmsb: { sma: 20, ema: 21 },
     long_short: { pair: "BTC", mode: "Long vs Short" },
-    top_traders: { coin: "BTC", period: "4h", days: 180 },
+    top_traders: { coin: "BTC", period: "1d", days: 365 },
     mstr_mnav: { btc: true },
     pmi_btc: { sma: 24 },
   },
@@ -326,13 +324,10 @@ function indicatorControls(ind, refresh) {
       } },
       TOP_TRADER_COINS.map((c) => el("option", { value: c, selected: c === params.coin }, c)),
       el("option", { value: OTHER, selected: !listed }, "Autre…"));
-    const period = el("select", { "aria-label": "Période", onchange: (e) => { params.period = e.target.value; refresh(); } },
-      TOP_TRADER_PERIODS.map(([code, label]) => el("option", { value: code, selected: code === params.period }, label)));
     const history = el("select", { "aria-label": "Historique", onchange: (e) => { params.days = Number(e.target.value); refresh(); } },
       TOP_TRADER_HISTORY.map(([days, label]) => el("option", { value: days, selected: days === params.days }, label)));
     return el("div", { class: "controls" },
       el("div", { class: "field" }, el("span", {}, "Monnaie"), el("div", { class: "row" }, coin, custom)),
-      el("label", { class: "field" }, el("span", {}, "Période"), period),
       el("label", { class: "field", title: "L'API de Binance ne publie que 30 jours ; au-delà, l'historique vient de son archive publique (data.binance.vision)." },
         el("span", {}, "Historique"), history));
   }

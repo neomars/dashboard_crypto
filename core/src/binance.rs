@@ -38,7 +38,7 @@ pub const KLINES_MARGIN_DAYS: i64 = 3;
 pub const ARCHIVE_URL: &str = "https://data.binance.vision";
 const ARCHIVE_PATH: &str = "/data/futures/um/daily/metrics";
 /// Profondeur maximale de l'historique, en jours (chaque jour est un fichier à télécharger).
-pub const MAX_HISTORY_DAYS: i64 = 730;
+pub const MAX_HISTORY_DAYS: i64 = 1_825;
 /// Nombre maximal de relevés tracés : au-delà, la figure devient lente. Les 30 jours de l'API en
 /// période de 5 minutes (8 640 relevés) restent permis.
 pub const MAX_POINTS: i64 = 6_000;
